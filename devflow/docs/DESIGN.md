@@ -99,6 +99,8 @@ project scope 允许裸 `@alias`，未定义时 run 启动前就失败（fail-fa
 | `@devflow-cross` | 需求 review、Copilot thread 评估、测试计划 review（第二视角） | pi / `<pi-provider>/<model>` |
 | `@devflow-ci` | CI 失败日志判因 | claude / sonnet |
 
+`@devflow-cross` 必须解析到与 `@devflow-main` **不同的 provider**（目前即 Pi）：引擎让顺序执行、同 provider、没写 `context:` 的 AI 节点继承上一个节点的会话，refine 的 `review` 紧跟 `draft`，同为 claude 时会看到 draft 的推理，违反 §5「不看 draft 的推理」。在评审节点加 `context: fresh` 之前（HANDOFF §8.1 第 1 条），这是硬要求。
+
 alias 决定 provider，节点上不写 `provider:`。因此 `allowed_tools` 不写（Claude 与 Pi 工具名不同）；只读节点用 `mutates_checkout: false` 做断言。Pi 不能用 mcp/plugins/hooks/agents。
 
 ## 5. devflow-refine
@@ -112,8 +114,9 @@ alias 决定 provider，节点上不写 `provider:`。因此 `allowed_tools` 不
 3. `refine`（loop_group，`max_iterations: 5`，`on_exhausted: complete`，`fresh_context: true`）body：
    - `control`（script，body 第一个节点）：`with:` 绑定 `$LOOP_PREV.gate.output.decision` / `.text`（第一轮或上一轮 gate 被跳过时为 `''`）。若上一轮 gate 回答 `finalize` → 输出 `{finalize: true}`；否则把上一轮人工意见（如有）追加到 `refine-log.md`，输出 `{finalize: false, round, human_feedback_path}`。
    - `draft`（`@devflow-main`，command `draft`，`when: "$control.output.finalize == 'false'"`）：读 intake/feasibility/refine-log/上一版 requirement，写 `$ARTIFACTS_DIR/requirement.md`（模板见 policy）。输出 `{summary, open_questions: integer}`。
-   - `review`（`@devflow-cross`，command `review`，`mutates_checkout: false`）：独立评审 requirement.md（不看 draft 的推理），检查缺漏、范围、tradeoff、可验收性；写 `$ARTIFACTS_DIR/review.md` 并追加到 `refine-log.md`。输出 `{verdict: approve|revise, needs_human: boolean, questions, summary}`。
-   - `gate`（终端唯一 sink，attention wait，form `select`，options `finalize` / `revise`）：`when:` 满足其一则询问人：review 要求人工；或 review 判定 approve（此时请人确认最终需求）；或 `refine_human == always`。`refine_human == never` 时只在 approve 时询问。消息里给出 requirement 路径、review 摘要、问题。人选 `revise` 时 text 写意见；选 `finalize` 时 text 可写补充。
+   - `review`（`@devflow-cross`，command `review`，`mutates_checkout: false`）：独立评审 requirement.md（不看 draft 的推理），检查缺漏、范围、tradeoff、可验收性；写 `$ARTIFACTS_DIR/review.md`。输出 `{verdict: approve|revise, needs_human: boolean, questions, summary}`。
+   - `record`（script）：把本轮 review 追加到 `refine-log.md`（在问人之前落盘），把草稿和评审快照到 `$ARTIFACTS_DIR/rounds/<n>/`，写 `last-review.json`；按 `refine_human` 与 review 结论计算 `ask`（规则见下面的 gate）和推荐选项，并给出 gate 消息要用的绝对路径（attention 文本里 `$ARTIFACTS_DIR` 保持字面量）。输出 `{ask, round, verdict, summary, questions_text, requirement_path, review_path, refine_log_path, recommendation}`。
+   - `gate`（终端唯一 sink，attention wait，form `select`，options `finalize` / `revise`）：`when: "$record.output.ask == 'true'"`。`record` 在以下任一情况把 `ask` 设为 true：review 要求人工；或 review 判定 approve（此时请人确认最终需求）；或 `refine_human == always`。`refine_human == never` 时只在 approve 时询问。消息里给出 requirement 路径、review 摘要、问题。人选 `revise` 时 text 写意见；选 `finalize` 时 text 可写补充。
    - `until_bash`：`f=$control.output.finalize; [ "$f" = "true" ]`（只读 control，绝不读可能被跳过的 gate）。
    - 说明：人选 finalize 后，下一轮 control 输出 finalize=true，draft/review/gate 被跳过，until 结束循环。被接受的 attention 回答允许超过 max_iterations 再跑一轮。
 4. `status`（script，depends_on refine）：读 `$ARTIFACTS_DIR/refine-state.json`（control 每轮写），输出 `{finalized: boolean}`。
@@ -128,13 +131,13 @@ alias 决定 provider，节点上不写 `provider:`。因此 `allowed_tools` 不
 
 顶层节点：
 
-1. `preflight`（script）：校验 KEY 与 `requirement.md` 存在；`archon forge check`（所需 op 列表）；`gh --version` 与 `gh auth status`；解析 repo（forge `resolve` 当前 remote）、base（`$BASE_BRANCH`）、head 分支（`git rev-parse --abbrev-ref HEAD`）；把 requirement 与（若存在且未消费的）`followup-work.md` 复制进 `$ARTIFACTS_DIR`，生成第一轮 `work-order.md`。输出 `{repo, base, head, requirement_path, has_followup}`。
+1. `preflight`（script）：校验 KEY 与 `requirement.md` 存在；`archon forge check`（所需 op 列表）；`gh --version` 与 `gh auth status`；解析 repo（forge `resolve` 当前 remote）、base（`$BASE_BRANCH`）、head 分支（`git rev-parse --abbrev-ref HEAD`）；把 requirement 与（若存在且未消费的）`followup-work.md` 复制进 `$ARTIFACTS_DIR`，生成第一轮 `work-order.md`。输出 `{repo, base, head, requirement_path, has_followup, pr_number}`（`pr_number` 为 `--input pr` 或按 head 找到的 open PR，没有则 0）。
 2. `rounds`（loop_group，`max_iterations: 6`，`on_exhausted: complete`，`fresh_context: true`）body，每轮：
    - `control`（script）：合并上一轮 `act` 写的 `next-work.md` 与上一轮 `escalate` 的人工回答（`$LOOP_PREV.escalate.output.text`）生成本轮 `work-order.md`。另绑定 `answer_choice: $LOOP_PREV.escalate.output.decision`（第 1 轮或上一轮 escalate 被跳过时为 `''`；不在 `continue|skip-copilot` 内即 refuse）：为 `skip-copilot` 时写标记 `$ARTIFACTS_DIR/copilot-skipped`（本 run 内不再删除），此后 request-review 与 await 都按 `copilot_mode=off` 处理。只选 choice、没有 text 不算代码工作。输出 `{implement: boolean, round}`。第 1 轮 implement=true。
    - `implement`（`@devflow-main`，command `implement`，`when: "$control.output.implement == 'true'"`）：按 work-order 实现/修复，本地 focused 检查，按逻辑单元提交（不 push、不 rebase、不 force）。对 work-order 里的每个已接受 thread 给出处理结果。输出 `{summary, commits: integer, threads: [{thread, status: fixed|not_fixed, note}]}`。
-   - `checkstyle`（script）：执行 `checkstyle_cmd`（及非空的 `local_verify_cmd`），退出码总是 0，输出 `{ok, log_path}`。
-   - `fix-style`（loop 节点，`@devflow-fast`，`when: "$checkstyle.output.ok == 'false'"`，`until_bash` 重跑 checkstyle_cmd，`max_iterations: 3`）：只修 checkstyle 违规并提交。
-   - `publish`（script，`trigger_rule: none_failed_min_one_success`）：checkstyle 仍失败则 refuse（节点失败，run 失败，人修复后 resume/重跑）。push（merge 式，不 force，回读远端 ref）；无 PR 则用 `pr-text`（见下）生成标题/正文后 `pr.create(draft: true)`；有 PR 时若被改成 ready 则 `pr.draft` 改回。对 implement 报告 `fixed` 的 thread：回复 `Fixed in <sha>: <note>` 并 resolve。输出 `{pr: PrRecord, pushed: boolean, head_revision}`。
+   - `checkstyle`（script）：执行 `checkstyle_cmd`（及非空的 `local_verify_cmd`），退出码总是 0，输出 `{ok, style_ok, verify_ok, log_path, verify_log_path}`（`ok` = 两者都通过）。
+   - `fix-style`（loop 节点，`@devflow-fast`，`when: "$checkstyle.output.style_ok == 'false'"`，`until_bash` 重跑 checkstyle_cmd 并覆盖 `checkstyle.log`，`max_iterations: 3`）：只修 checkstyle 违规并提交。`local_verify_cmd` 失败没有 agent 修复步骤，由 publish 直接 refuse。
+   - `publish`（script，`trigger_rule: none_failed_min_one_success`）：checkstyle 仍失败则 refuse（节点失败，run 失败，人修复后 resume/重跑）。push（merge 式，不 force，回读远端 ref）；无 PR 则用 `pr-text`（见下）生成标题/正文后 `pr.create(draft: true)`；有 PR 时若被改成 ready 则 `pr.draft` 改回。对 implement 报告 `fixed` 的 thread：回复 `Fixed in <sha>: <note>` 并 resolve。输出 `{pr: PrRecord, pushed: boolean, head_revision, answered}`（`answered` = 本轮回复并 resolve 的 thread 数）。
      - PR 文本：`publish` 前有 `pr-text`（`@devflow-fast`，`when` PR 尚不存在）写 `$ARTIFACTS_DIR/pr-title.txt`、`pr-body.md`。
    - `request-review`（script）：`copilot_mode == request`、没有 `copilot-skipped` 标记、且本 head 尚未请求过（记录在 `$ARTIFACTS_DIR/copilot-requests.json`）时执行 `copilot_request_cmd`。`gh` 可能退出 0 却没记录任何请求（账号没有 Copilot code review、仓库/组织不允许，或命令没走到 GitHub 的 reviewer 请求），所以 `copilot_confirm_cmd` 非空时在请求前后各执行一次（只读其 stdout，每行一个 login，与 `copilot_logins` 做大小写不敏感精确比较）：请求后的 Copilot 行数比请求前多（这把证据绑定到本次请求，而不是上一轮的请求；事件可能晚 1–2 秒出现，所以按 2/4/8 秒退避重读），或 forge `pr.reviews` 已有 Copilot 对本 head 的 review，才算请求成功并记录 head；否则（包括读 reviews 失败）输出 `requested: false` 与说明原因和出路（回答 escalation 选 `skip-copilot`，或把 `copilot_mode` 设为 `off`/`auto`）的 `error`，不记录 head，下一轮在同一 head 上重试。上一 head 的 Copilot 请求仍在 pending 时，GitHub 可能不再记录新事件，这时也会询问人。confirm 命令自身失败（非 0/超时，请求前或请求后）时什么也没得知，不阻塞：发 notice 告警（含日志路径），照常记录并算成功，由 await 的超时兜底。所有模板在 preflight 用样例值试渲染，token 写错在任何 agent 开销之前就 refuse。请求失败不致命（`error` 非空），await 不再等 Copilot（`copilot=request_failed`），act 立即询问人。输出 `{requested, head_revision, error}`。
    - `await`（script，`timeout: 9000000` 毫秒）：每 `poll_interval_sec` 轮询，直到「Copilot 已就当前 head 给出 review（或 mode=off——含 `copilot-skipped` 标记——或请求失败，或超时）」且「checks 已稳定（无 pending/running，summary≠none，revision==head）或超时」。拉取并保存快照：`pr.threads`（未 resolve 的）、Copilot 当前 head 的 review 正文、request-review 的 `request_error`、`checks.state`；对每个 red 的 Actions unit 拉 `checks.logs` 存到 `$ARTIFACTS_DIR/ci-logs/<name>.log`；执行 `git merge-tree` 检查与 base 冲突。输出 `{head_revision, copilot: done|timeout|off|request_failed, checks: green|red|pending_timeout|none|gated|unknown, open_threads: integer, red_units: integer, conflict: boolean, snapshot_path}`。
@@ -159,7 +162,7 @@ alias 决定 provider，节点上不写 `provider:`。因此 `allowed_tools` 不
 4. `plan-review`（`@devflow-cross`）：对照 requirement 的验收标准检查计划覆盖与可执行性，写 `plan-review.md`。输出 `{ok, gaps}`。
 5. `assemble`（script）：合并为 `verify-plan.md`（含 review 意见），生成 `verify-results.md` 模板（每个用例一行），写入状态目录。输出 `{plan_path, results_path, cases: integer}`。
 6. `run-tests`（attention wait，form `message`）：请人启动服务、按计划测试、填写 results 文件或在回答里直接写结果。
-7. `triage`（`@devflow-main`）：读人的回答与 results 文件，输出 `{all_passed, failed: integer, summary}`；写 `verify-report.md`；有失败时写 `followup-work.md`（供下次 deliver 使用）。
+7. `triage`（`@devflow-main`）：读人的回答与 results 文件，输出 `{all_passed, failed: integer, blocked: integer, not_run: integer, followup_written: boolean, summary}`；写 `verify-report.md`；有失败时写 `followup-work.md`（供下次 deliver 使用）。
 
 ## 8. 人工介入点汇总
 
