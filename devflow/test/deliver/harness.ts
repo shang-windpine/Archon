@@ -4,7 +4,8 @@
  * operations from a per-operation queue and records every request.
  *
  * The fake is named by `ARCHON_CLI_COMMAND`, which is how `archon:script`'s `forge()`
- * reaches the host. Each queue entry is used once in order; the last one repeats.
+ * and `notice()` reach the host; notices are recorded and acknowledged. Each queue entry
+ * is used once in order; the last one repeats.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -13,6 +14,8 @@ import { join } from 'node:path';
 import { trackTempRoots } from '../temp-roots.ts';
 
 const PRELOAD = join(import.meta.dir, '..', 'archon-script.preload.ts');
+/** The run id every script sees as `runId()`. */
+const RUN_ID = 'run-0000-test';
 const SCRIPTS = join(import.meta.dir, '..', '..', 'pack', 'devflow', 'devflow-deliver', 'scripts');
 
 /** A forge answer: a result value, or a failure the host reports with `ok: false`. */
@@ -39,13 +42,19 @@ export interface ScriptRun {
   /** The emitted JSON document; throws when stdout is not exactly one. */
   readonly output: () => Record<string, unknown>;
   readonly requests: readonly ForgeRequest[];
+  /** The text of every `workflow notice` the script posted. */
+  readonly notices: readonly string[];
   readonly artifacts: string;
 }
 
 const FAKE_CLI = `import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 const [dir] = [process.env.DEVFLOW_FAKE_DIR];
 const argv = process.argv.slice(2);
-if (argv[0] !== 'forge') { process.stderr.write('fake host: only forge is faked'); process.exitCode = 1; }
+if (argv[0] === 'workflow' && argv[1] === 'notice') {
+  appendFileSync(dir + '/notices.jsonl', JSON.stringify(argv[argv.indexOf('--') + 1]) + '\\n');
+  process.stdout.write('{}');
+}
+else if (argv[0] !== 'forge') { process.stderr.write('fake host: only forge and notices are faked'); process.exitCode = 1; }
 else {
   const op = argv[1];
   const request = JSON.parse(readFileSync(argv[argv.indexOf('--data-file') + 1], 'utf8'));
@@ -104,6 +113,7 @@ export function deliverHarness(): Harness {
         ),
         ARTIFACTS_DIR: artifacts,
         STATE_DIR: state,
+        WORKFLOW_ID: RUN_ID,
         DEVFLOW_FAKE_DIR: dir,
         ARCHON_CLI_COMMAND: JSON.stringify([
           process.execPath,
@@ -130,12 +140,20 @@ export function deliverHarness(): Harness {
             .filter(line => line !== '')
             .map(line => JSON.parse(line) as ForgeRequest)
         : [];
+      const noticeLog = join(dir, 'notices.jsonl');
+      const notices = existsSync(noticeLog)
+        ? readFileSync(noticeLog, 'utf8')
+            .split('\n')
+            .filter(line => line !== '')
+            .map(line => JSON.parse(line) as string)
+        : [];
       return {
         status: result.status,
         stdout: result.stdout,
         stderr: result.stderr,
         output: () => JSON.parse(result.stdout) as Record<string, unknown>,
         requests,
+        notices,
         artifacts,
       };
     },

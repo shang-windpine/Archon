@@ -1,0 +1,50 @@
+# Copilot was never registered as a reviewer (request-review's confirm found no Copilot
+# login), so await does not wait and act asks; the operator answers skip-copilot. The
+# marker control writes for that answer is covered by the control, request-review and
+# await unit tests; here the gate offers the choice and its answer is accepted.
+preflight:
+  repo: { host: github.com, path: acme/shop }
+  base: main
+  head: feature/ABC-1
+  requirement_path: /tmp/artifacts/requirement.md
+  has_followup: false
+  pr_number: 7
+control: { round: 1, implement: true, pr_number: 7, has_pr: true, work_order: /tmp/artifacts/work-order.md }
+implement: { summary: "stub: implemented", commits: 1, threads: [] }
+checkstyle: { ok: true, style_ok: true, verify_ok: true, log_path: /tmp/artifacts/checkstyle.log, verify_log_path: "" }
+publish:
+  pr: { number: 7, url: "https://github.com/acme/shop/pull/7", is_draft: true }
+  pushed: true
+  head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  answered: 0
+request-review:
+  requested: false
+  head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  error: "Copilot was not registered as a reviewer after the request"
+await:
+  head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  copilot: request_failed
+  checks: green
+  open_threads: 0
+  red_units: 0
+  conflict: false
+  snapshot_path: /tmp/artifacts/snapshot.json
+act:
+  done: false
+  has_work: false
+  ask: true
+  reruns: 0
+  summary: "needs you: requesting a Copilot review failed"
+  report_path: /tmp/artifacts/escalation.md
+  pr_number: 7
+  pr_url: "https://github.com/acme/shop/pull/7"
+escalate: { decision: skip-copilot, text: "" }
+summarize: { summary: "stub" }
+finish: { done: false, pr_url: "https://github.com/acme/shop/pull/7", reason: "the round cap was reached" }
+fixture:
+  expect: completed
+  authored: failed
+  inputs: { key: ABC-1 }
+  reached: [request-review, await, act, escalate, finish]
+  resolved-text-contains:
+    escalate: "round 1, needs you: requesting a Copilot review failed."

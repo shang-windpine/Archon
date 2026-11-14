@@ -1,6 +1,7 @@
-# A thread the judge cannot settle (needs_human): act asks, and the escalate message
-# gate is reached; its stub is the operator's answer. The message names the round's
-# summary and report path through node outputs ( stays literal there).
+# A thread the judge cannot settle (needs_human): act asks, and the escalate select
+# gate is reached; its stub is the operator's answer (continue, with text). The message
+# names the round's summary and report path through node outputs; the run id stays
+# literal there, so the report carries the answer commands.
 preflight:
   repo: { host: github.com, path: acme/shop }
   base: main
@@ -34,11 +35,11 @@ act:
   has_work: false
   ask: true
   reruns: 0
-  summary: "1 review thread(s) need a human decision; 1 review thread(s) unresolved"
+  summary: "needs you: 1 review thread(s) need a human decision; status: 1 review thread(s) unresolved"
   report_path: /tmp/artifacts/escalation.md
   pr_number: 7
   pr_url: "https://github.com/acme/shop/pull/7"
-escalate: { text: "Keep 400. Decline thread PRRT_9: the API contract in requirement AC-4 fixes 400 for unknown users." }
+escalate: { decision: continue, text: "Keep 400. Decline thread PRRT_9: the API contract in requirement AC-4 fixes 400 for unknown users." }
 summarize: { summary: "stub" }
 finish: { done: false, pr_url: "https://github.com/acme/shop/pull/7", reason: "the round cap was reached" }
 fixture:
@@ -47,4 +48,4 @@ fixture:
   inputs: { key: ABC-1 }
   reached: [judge-threads, act, escalate, finish]
   resolved-text-contains:
-    escalate: "Details and how to answer: /tmp/artifacts/escalation.md"
+    escalate: "needs you: 1 review thread(s) need a human decision; status: 1 review thread(s) unresolved. Details and what to write in your answer: /tmp/artifacts/escalation.md"

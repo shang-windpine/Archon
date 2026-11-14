@@ -12,6 +12,7 @@ const SETTINGS = {
   local_verify_cmd: '',
   copilot_mode: 'off',
   copilot_request_cmd: '',
+  copilot_confirm_cmd: '',
   copilot_logins: '',
   poll_interval_sec: '60',
   copilot_wait_min: '30',

@@ -26,7 +26,17 @@ inputs:
       ruleset requests it and the pack only waits. off: the pack does not wait for Copilot.
   copilot_request_cmd:
     default: "gh pr edit {number} --repo {repo} --add-reviewer @copilot"
-    description: Command that requests a Copilot review; {number} and {repo} are filled in.
+    description: >-
+      Command that requests a Copilot review; {number}, {repo} (as gh --repo takes it),
+      {host} and {path} (OWNER/REPO) are filled in.
+  copilot_confirm_cmd:
+    default: "gh api --hostname {host} --paginate repos/{path}/issues/{number}/events --jq '.[] | select(.event == \"review_requested\") | .requested_reviewer.login // empty'"
+    description: >-
+      Command run before and after a successful request that prints the requested reviewer
+      of every review request recorded on the pull request, one login per line; the same
+      tokens as copilot_request_cmd are filled in. The request counts only when the lines
+      naming a copilot_logins entry grow, or Copilot already reviewed the head. Empty: no
+      confirmation.
   copilot_logins:
     type: list
     default: "copilot-pull-request-reviewer,copilot-pull-request-reviewer[bot],copilot,Copilot"

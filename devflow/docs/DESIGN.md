@@ -74,7 +74,8 @@ pack 布局硬规则：每个 workflow 文件夹恰好一个 YAML；pack 根目�
 | `checkstyle_cmd` | string | `mvn -B -q checkstyle:check` | 本地 checkstyle；退出码 0 = 通过 |
 | `local_verify_cmd` | string | `""` | push 前额外的本地快速检查（如某模块 UT）；为空跳过 |
 | `copilot_mode` | enum `request\|auto\|off` | `request` | request=每次 push 后由 pack 请求 Copilot review；auto=仓库 ruleset 自动 review，pack 只等待；off=不等 Copilot |
-| `copilot_request_cmd` | string | `gh pr edit {number} --repo {repo} --add-reviewer @copilot` | 请求 Copilot review 的命令；`{number}` `{repo}` 替换 |
+| `copilot_request_cmd` | string | `gh pr edit {number} --repo {repo} --add-reviewer @copilot` | 请求 Copilot review 的命令；替换 `{number}`、`{repo}`（`gh --repo` 的写法：github.com 上为 OWNER/REPO，其他 host 为 HOST/OWNER/REPO）、`{host}`、`{path}`（OWNER/REPO） |
+| `copilot_confirm_cmd` | string | `gh api --hostname {host} --paginate repos/{path}/issues/{number}/events --jq '.[] \| select(.event == "review_requested") \| .requested_reviewer.login // empty'` | 确认请求确实被 GitHub 记录的命令：在请求前后各跑一次，stdout 每行一个 review request 事件的 reviewer login，token 同上。请求后命中 `copilot_logins` 的行数比请求前多（必要时按 2/4/8 秒退避重读），或 head 上已有 Copilot review，才算成功；否则请求视为失败。不读 `pulls/{n}/requested_reviewers`：Copilot 即使 review 正在进行也从不出现在那里。该命令本身失败时只告警、请求仍算成功。为空表示不确认 |
 | `copilot_logins` | list | `copilot-pull-request-reviewer,copilot-pull-request-reviewer[bot],copilot,Copilot` | 识别 Copilot review 作者的 login（大小写不敏感精确比较） |
 | `poll_interval_sec` | string | `60` | 轮询间隔 |
 | `copilot_wait_min` | string | `30` | 等待 Copilot review 的上限（分钟） |
@@ -129,21 +130,22 @@ alias 决定 provider，节点上不写 `provider:`。因此 `allowed_tools` 不
 
 1. `preflight`（script）：校验 KEY 与 `requirement.md` 存在；`archon forge check`（所需 op 列表）；`gh --version` 与 `gh auth status`；解析 repo（forge `resolve` 当前 remote）、base（`$BASE_BRANCH`）、head 分支（`git rev-parse --abbrev-ref HEAD`）；把 requirement 与（若存在且未消费的）`followup-work.md` 复制进 `$ARTIFACTS_DIR`，生成第一轮 `work-order.md`。输出 `{repo, base, head, requirement_path, has_followup}`。
 2. `rounds`（loop_group，`max_iterations: 6`，`on_exhausted: complete`，`fresh_context: true`）body，每轮：
-   - `control`（script）：合并上一轮 `act` 写的 `next-work.md` 与上一轮 `escalate` 的人工回答（`$LOOP_PREV.escalate.output.text`）生成本轮 `work-order.md`。输出 `{implement: boolean, round}`。第 1 轮 implement=true。
+   - `control`（script）：合并上一轮 `act` 写的 `next-work.md` 与上一轮 `escalate` 的人工回答（`$LOOP_PREV.escalate.output.text`）生成本轮 `work-order.md`。另绑定 `answer_choice: $LOOP_PREV.escalate.output.decision`（第 1 轮或上一轮 escalate 被跳过时为 `''`；不在 `continue|skip-copilot` 内即 refuse）：为 `skip-copilot` 时写标记 `$ARTIFACTS_DIR/copilot-skipped`（本 run 内不再删除），此后 request-review 与 await 都按 `copilot_mode=off` 处理。只选 choice、没有 text 不算代码工作。输出 `{implement: boolean, round}`。第 1 轮 implement=true。
    - `implement`（`@devflow-main`，command `implement`，`when: "$control.output.implement == 'true'"`）：按 work-order 实现/修复，本地 focused 检查，按逻辑单元提交（不 push、不 rebase、不 force）。对 work-order 里的每个已接受 thread 给出处理结果。输出 `{summary, commits: integer, threads: [{thread, status: fixed|not_fixed, note}]}`。
    - `checkstyle`（script）：执行 `checkstyle_cmd`（及非空的 `local_verify_cmd`），退出码总是 0，输出 `{ok, log_path}`。
    - `fix-style`（loop 节点，`@devflow-fast`，`when: "$checkstyle.output.ok == 'false'"`，`until_bash` 重跑 checkstyle_cmd，`max_iterations: 3`）：只修 checkstyle 违规并提交。
    - `publish`（script，`trigger_rule: none_failed_min_one_success`）：checkstyle 仍失败则 refuse（节点失败，run 失败，人修复后 resume/重跑）。push（merge 式，不 force，回读远端 ref）；无 PR 则用 `pr-text`（见下）生成标题/正文后 `pr.create(draft: true)`；有 PR 时若被改成 ready 则 `pr.draft` 改回。对 implement 报告 `fixed` 的 thread：回复 `Fixed in <sha>: <note>` 并 resolve。输出 `{pr: PrRecord, pushed: boolean, head_revision}`。
      - PR 文本：`publish` 前有 `pr-text`（`@devflow-fast`，`when` PR 尚不存在）写 `$ARTIFACTS_DIR/pr-title.txt`、`pr-body.md`。
-   - `request-review`（script）：`copilot_mode == request` 且本 head 尚未请求过（记录在 `$ARTIFACTS_DIR/copilot-requests.json`）时执行 `copilot_request_cmd`。失败不致命（记录 `request_error`），由 await 超时兜底并上报。输出 `{requested, head_revision, error}`。
-   - `await`（script，`timeout: 9000000` 毫秒）：每 `poll_interval_sec` 轮询，直到「Copilot 已就当前 head 给出 review（或 mode=off，或超时）」且「checks 已稳定（无 pending/running，summary≠none，revision==head）或超时」。拉取并保存快照：`pr.threads`（未 resolve 的）、Copilot 当前 head 的 review 正文、`checks.state`；对每个 red 的 Actions unit 拉 `checks.logs` 存到 `$ARTIFACTS_DIR/ci-logs/<name>.log`；执行 `git merge-tree` 检查与 base 冲突。输出 `{head_revision, copilot: done|timeout|off|request_failed, checks: green|red|pending_timeout|none|gated|unknown, open_threads: integer, red_units: integer, conflict: boolean, snapshot_path}`。
+   - `request-review`（script）：`copilot_mode == request`、没有 `copilot-skipped` 标记、且本 head 尚未请求过（记录在 `$ARTIFACTS_DIR/copilot-requests.json`）时执行 `copilot_request_cmd`。`gh` 可能退出 0 却没记录任何请求（账号没有 Copilot code review、仓库/组织不允许，或命令没走到 GitHub 的 reviewer 请求），所以 `copilot_confirm_cmd` 非空时在请求前后各执行一次（只读其 stdout，每行一个 login，与 `copilot_logins` 做大小写不敏感精确比较）：请求后的 Copilot 行数比请求前多（这把证据绑定到本次请求，而不是上一轮的请求；事件可能晚 1–2 秒出现，所以按 2/4/8 秒退避重读），或 forge `pr.reviews` 已有 Copilot 对本 head 的 review，才算请求成功并记录 head；否则（包括读 reviews 失败）输出 `requested: false` 与说明原因和出路（回答 escalation 选 `skip-copilot`，或把 `copilot_mode` 设为 `off`/`auto`）的 `error`，不记录 head，下一轮在同一 head 上重试。上一 head 的 Copilot 请求仍在 pending 时，GitHub 可能不再记录新事件，这时也会询问人。confirm 命令自身失败（非 0/超时，请求前或请求后）时什么也没得知，不阻塞：发 notice 告警（含日志路径），照常记录并算成功，由 await 的超时兜底。所有模板在 preflight 用样例值试渲染，token 写错在任何 agent 开销之前就 refuse。请求失败不致命（`error` 非空），await 不再等 Copilot（`copilot=request_failed`），act 立即询问人。输出 `{requested, head_revision, error}`。
+   - `await`（script，`timeout: 9000000` 毫秒）：每 `poll_interval_sec` 轮询，直到「Copilot 已就当前 head 给出 review（或 mode=off——含 `copilot-skipped` 标记——或请求失败，或超时）」且「checks 已稳定（无 pending/running，summary≠none，revision==head）或超时」。拉取并保存快照：`pr.threads`（未 resolve 的）、Copilot 当前 head 的 review 正文、request-review 的 `request_error`、`checks.state`；对每个 red 的 Actions unit 拉 `checks.logs` 存到 `$ARTIFACTS_DIR/ci-logs/<name>.log`；执行 `git merge-tree` 检查与 base 冲突。输出 `{head_revision, copilot: done|timeout|off|request_failed, checks: green|red|pending_timeout|none|gated|unknown, open_threads: integer, red_units: integer, conflict: boolean, snapshot_path}`。
    - `judge-threads`（`@devflow-cross`，command `judge-threads`，`when: "$await.output.open_threads > 0"`）：读快照中的 thread、Copilot review 正文、requirement；对每个 thread 给出 `accept | decline | not_this_change | needs_human`，decline/not_this_change 写回复正文。输出 `{decisions: [{thread, decision, reason, reply}], summary}`。
    - `judge-ci`（`@devflow-ci`，command `judge-ci`，`when: "$await.output.red_units > 0"`）：读 ci-logs 与 PR diff，判定每个 red unit：`pr_caused | infra | flaky | unknown`。输出 `{units: [{name, cause, evidence, fix}], summary}`。
-   - `act`（script，`trigger_rule: none_failed_min_one_success`，依赖 await 与两个 judge）：执行 decline/not_this_change 的回复+resolve；对 infra/flaky 且可 rerun 的 unit 执行 `checks.rerun`（同一 head 同一 unit 只 rerun 一次，记录在 `$ARTIFACTS_DIR/reruns.json`）；把 accept 的 thread、pr_caused 的 CI 失败、merge 冲突写入 `next-work.md`；计算结果。输出 `{done, has_work, ask, reruns: integer, summary}`：
+   - `act`（script，`trigger_rule: none_failed_min_one_success`，依赖 await 与两个 judge）：执行 decline/not_this_change 的回复+resolve；对 infra/flaky 且可 rerun 的 unit 执行 `checks.rerun`（同一 head 同一 unit 只 rerun 一次，记录在 `$ARTIFACTS_DIR/reruns.json`）；把 accept 的 thread、pr_caused 的 CI 失败、merge 冲突写入 `next-work.md`；计算结果。输出 `{done, has_work, ask, reruns: integer, summary, report_path, pr_number, pr_url}`：
      - `done` = checks=green 且 revision==head 且 required_checks 全绿 且 未 resolve thread=0 且 copilot∈{done,off} 且 无冲突 且 has_work=false 且 reruns=0。
-     - `ask` = 存在 needs_human thread、或 unknown 的 CI 失败、或 copilot=request_failed/timeout、或 checks=pending_timeout/gated/unknown、或同一 unit rerun 后仍红。
-   - `escalate`（终端唯一 sink，attention wait，form `message`，`when: "$act.output.ask == 'true'"`）：说明需要人决定的事项与快照路径。人的回答进入下一轮 work-order，由 implement agent 解释执行（例如「这个 thread 拒绝，理由是……」「CI 是环境问题，已手工 rerun」）。
-   - `until_bash`：`d=$act.output.done; [ "$d" = "true" ]`。
+     - `ask` = 存在 needs_human thread（含 judge 漏判的 thread、没有回复正文的 decline）、或 unknown 的 CI 失败、或 copilot=request_failed/timeout、或 checks=pending_timeout/gated/unknown/none、或同一 unit rerun 后仍红。另外有意加入的触发：没有任何 judge 判定的红 check、判为 infra/flaky 但 forge 不能 rerun、计划的 rerun 没有发出、本轮没有 checks 快照、以及「未 done 又没有 work 也没发 rerun」（no progress，否则循环会空转到 max_iterations）。
+     - 原因分两类（`computeRoundOutcome` 的 `askReasons` 与 `notes`，`reasons` 保留为两者合集）：`askReasons` 只含需要人决定的事项，`notes` 是状态/进度（交给下一轮的工作、已发 rerun、checks 为红、未 resolve 的 thread、已拒绝并 resolve 的 thread 等）。ask 时 `summary` 为 `needs you: <askReasons>; status: <notes>`；`escalation.md` 分「Needs your decision」与「Status this round」两节（request 失败时附 `request_error`），并说明两个选项的作用；带 run id 的回答命令由引擎在暂停时给出（pause notice 与 `archon workflow attention`），act 不另写。
+   - `escalate`（终端唯一 sink，attention wait，form `select`，`when: "$act.output.ask == 'true'"`）：options `continue`（再跑一轮，text 作为下一轮 work order）与 `skip-copilot`（本 run 余下部分不再请求、不再等待 Copilot review，然后继续；text 仍是 work order）；text 可选。attention 文本给出 summary 与 `escalation.md` 路径，回答命令在该文件里。人的 text 进入下一轮 work-order，由 implement agent 解释执行（例如「这个 thread 拒绝，理由是……」「CI 是环境问题，已手工 rerun」）；choice 由 control 结构化处理，绝不解析 text。
+   - `until_bash`：`d=$act.output.done; [ "$d" = "true" ]`（只读 act，绝不读可能被跳过的 escalate）。
 3. `summarize`（`@devflow-fast`，command `summarize`）：基于 requirement 与 `git diff <base>...HEAD` 写 `change-summary.md`（模块、行为变化、UI/API 影响）。
 4. `finish`（script）：确保 PR 仍为 draft；写 `delivery.json`、`change-summary.md` 到状态目录；把 `followup-work.md` 标记为已消费（改名加时间戳）。输出 `{done, pr_url, reason}`。`returns: finish`，`outcome_field: done`。
 
@@ -165,10 +167,10 @@ alias 决定 provider，节点上不写 `provider:`。因此 `allowed_tools` 不
 |---|---|---|---|
 | refine.gate | review 要求人工 / review 通过请确认 / always | select: finalize/revise + text | revise→下一轮 draft 读 refine-log；finalize→结束循环 |
 | refine.final-gate | 循环耗尽未 finalize | approval | approve→finalize；reject→cancel（可重跑 refine 续改） |
-| deliver.escalate | 需要人判断的 thread / 无法判因的 CI / 超时 | message | 下一轮 work-order，implement 解释执行 |
+| deliver.escalate | 需要人判断的 thread / 无法判因的 CI / Copilot 请求未登记或超时 / checks 超时等（见 §6 `ask`） | select: continue/skip-copilot + 可选 text | text→下一轮 work-order，implement 解释执行；skip-copilot→本 run 不再请求/等待 Copilot |
 | verify.run-tests | 总是 | message | triage |
 
-回答方式：`archon workflow attention` 列出待办；`archon workflow answer <run-id> --occurrence <occ> --choose <id> --text "..."`（message 表单只用 `--text`）。
+回答方式：`archon workflow attention` 列出待办；`archon workflow answer <run-id> --occurrence <occ> --choose <id> --text "..."`（message 表单只用 `--text`），或简写 `archon workflow respond <run-id> <option> "<text>"`（引擎暂停时给出带 run id 的确切命令）。
 
 ## 9. 安全与正确性规则
 

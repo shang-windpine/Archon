@@ -146,6 +146,21 @@ describe('renderCommand', () => {
     const template = "echo ${HOME} {key} | awk '{print $1}' {}";
     expect(renderCommand(template, { key: 'K' })).toBe("echo ${HOME} 'K' | awk '{print $1}' {}");
   });
+  test('a token inside a path concatenates with its neighbours into one word', () => {
+    // copilot_confirm_cmd's default puts {path} and {number} inside an API path.
+    const rendered = renderCommand(
+      `${ARGV_PRINTER} --hostname {host} repos/{path}/issues/{number}/events --jq '.[] | .event'`,
+      { host: 'ghe.example.com', path: 'o/r', number: '1' }
+    );
+    expect(rendered).toContain("repos/'o/r'/issues/'1'/events");
+    expect(shArgs(rendered)).toEqual([
+      '--hostname',
+      'ghe.example.com',
+      'repos/o/r/issues/1/events',
+      '--jq',
+      '.[] | .event',
+    ]);
+  });
   test('shellQuote of an empty value is an empty word', () => {
     expect(shellQuote('')).toBe("''");
   });
@@ -166,6 +181,21 @@ describe('runCommand', () => {
     expect(log).toContain('out');
     expect(log).toContain('err');
     expect(result.outputTail).toBe(log);
+  });
+  test('keeps stdout apart from stderr when given stdoutPath', async () => {
+    const dir = scratch();
+    const logPath = join(dir, 'run.log');
+    const stdoutPath = join(dir, 'out', 'stdout.txt');
+    const result = await runCommand('echo out; echo err >&2', {
+      cwd: dir,
+      timeoutMs: 10_000,
+      logPath,
+      stdoutPath,
+    });
+    expect(result.code).toBe(0);
+    expect(readFileSync(stdoutPath, 'utf8')).toBe('out\n');
+    expect(readFileSync(logPath, 'utf8')).toBe('err\n');
+    expect(result.outputTail).toBe('err\n');
   });
   test('runs in cwd and returns code 0', async () => {
     const dir = scratch();

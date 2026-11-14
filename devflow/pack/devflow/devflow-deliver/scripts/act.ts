@@ -13,7 +13,9 @@
  *   (and the accepted thread ids `next-threads.json`), which control turns into the
  *   next work order.
  * - done / has_work / ask come from computeRoundOutcome. When the round asks,
- *   `escalation.md` says what a person must decide.
+ *   `escalation.md` says what a person must decide, apart from the round's status, and
+ *   what each escalate option does; the engine prints the answer commands when the run
+ *   pauses. The summary leads with what needs the person.
  *
  * Bound inputs: key, base (preflight), round (control), pr_number, pr_url (publish),
  * snapshot_path (await), decisions, units (the judges' outputs; `null` when skipped).
@@ -47,6 +49,8 @@ interface Snapshot {
   readonly head_revision: string;
   readonly base_revision: string;
   readonly copilot: AwaitCopilot;
+  /** request-review's error; absent in a snapshot from before it was recorded. */
+  readonly request_error?: string;
   readonly checks: AwaitChecks;
   readonly checks_summary: ChecksSummary | null;
   readonly threads: readonly SnapshotThread[];
@@ -133,7 +137,8 @@ function escalationReport(parts: {
   round: string;
   prUrl: string;
   snapshotPath: string;
-  reasons: readonly string[];
+  askReasons: readonly string[];
+  notes: readonly string[];
   decisions: readonly ThreadDecision[];
   threads: readonly SnapshotThread[];
   unknownIds: readonly string[];
@@ -146,11 +151,16 @@ function escalationReport(parts: {
     `Pull request: ${parts.prUrl}`,
     `Round snapshot: \`${parts.snapshotPath}\``,
     '',
-    '## Why the round stopped',
+    '## Needs your decision',
     '',
-    ...parts.reasons.map(reason => `- ${reason}`),
+    ...parts.askReasons.map(reason => `- ${reason}`),
     '',
   ];
+  const requestError = parts.snapshot.request_error ?? '';
+  if (parts.snapshot.copilot === 'request_failed' && requestError !== '')
+    lines.push(`Copilot review request: ${requestError}`, '');
+  if (parts.notes.length > 0)
+    lines.push('## Status this round', '', ...parts.notes.map(note => `- ${note}`), '');
   const human = parts.decisions.filter(d => d.decision === 'needs_human');
   if (human.length > 0) {
     lines.push('## Threads that need your decision', '');
@@ -198,8 +208,12 @@ function escalationReport(parts: {
   lines.push(
     '## How to answer',
     '',
-    'Answer in plain text. Your answer becomes the next round’s work order and is shown to the',
-    'thread and CI judges: say what to do with each item, for example that a thread should be',
+    'Choose `continue` to run another round, or `skip-copilot` to stop requesting and waiting',
+    'for a Copilot review for the rest of this run and then continue. `archon workflow attention`',
+    'and the pause notice give the answer command with this run’s id.',
+    '',
+    'The text is optional. It becomes the next round’s work order and is shown to the thread',
+    'and CI judges: say what to do with each item, for example that a thread should be',
     'declined and why, that a check failure is environmental and you reran it, or what to change.',
     ''
   );
@@ -275,11 +289,14 @@ try {
     rmSync(nextThreadsPath, { force: true });
   }
 
-  const reasons = [
-    ...outcome.reasons,
+  const askReasons = [
+    ...outcome.askReasons,
     ...(reconciled.missing.length > 0
       ? [`the judge left thread(s) undecided: ${reconciled.missing.join(', ')}`]
       : []),
+  ];
+  const notes = [
+    ...outcome.notes,
     ...(replied > 0 ? [`declined and resolved ${String(replied)} thread(s)`] : []),
   ];
   const reportPath = artifactPath('escalation.md');
@@ -291,7 +308,8 @@ try {
         round: input('round'),
         prUrl: input('pr_url'),
         snapshotPath,
-        reasons,
+        askReasons,
+        notes,
         decisions: reconciled.decisions,
         threads: snapshot.threads,
         unknownIds: reconciled.unknown,
@@ -302,9 +320,12 @@ try {
   } else {
     rmSync(reportPath, { force: true });
   }
+  const status = notes.length > 0 ? `status: ${notes.join('; ')}` : '';
   const summary = outcome.done
     ? 'done: checks green, Copilot settled, no open thread'
-    : reasons.join('; ');
+    : outcome.ask
+      ? [`needs you: ${askReasons.join('; ')}`, ...(status === '' ? [] : [status])].join('; ')
+      : status;
   emit({
     done: outcome.done,
     has_work: outcome.has_work,

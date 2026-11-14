@@ -32,9 +32,21 @@ settings:
   copilot_mode: request
 
   # How a review is requested in request mode. {number} is the PR number, {repo} is
-  # owner/name. `--add-reviewer @copilot` needs gh >= 2.88 and is not available on
-  # GitHub Enterprise Server.
+  # what `gh --repo` takes (owner/name on github.com, host/owner/name elsewhere), {host}
+  # the host and {path} owner/name. `--add-reviewer @copilot` needs gh >= 2.88 and is not
+  # available on GitHub Enterprise Server.
   copilot_request_cmd: "gh pr edit {number} --repo {repo} --add-reviewer @copilot"
+
+  # Confirms a request took effect. It runs before and after the request and prints the
+  # requested reviewer of every review request recorded on the PR, one login per line
+  # (same tokens as above); the request counts when the Copilot lines grow, or Copilot
+  # already reviewed the head. gh can exit 0 without recording a request when the account
+  # lacks Copilot code review or the repository or organization does not allow it; then
+  # no review comes, so devflow asks a person at once instead of waiting
+  # copilot_wait_min. The PR's requested_reviewers list is no evidence: GitHub never
+  # lists Copilot there, even while its review is pending. If this command itself fails,
+  # the request counts as made. Empty: no confirmation.
+  copilot_confirm_cmd: "gh api --hostname {host} --paginate repos/{path}/issues/{number}/events --jq '.[] | select(.event == \"review_requested\") | .requested_reviewer.login // empty'"
 
   # Logins that identify Copilot as a review author (case-insensitive exact match).
   copilot_logins: "copilot-pull-request-reviewer,copilot-pull-request-reviewer[bot],copilot,Copilot"

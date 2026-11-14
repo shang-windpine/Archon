@@ -9,6 +9,7 @@ const defaults: RawDeliverSettings = {
   local_verify_cmd: '',
   copilot_mode: 'request',
   copilot_request_cmd: 'gh pr edit {number} --repo {repo} --add-reviewer @copilot',
+  copilot_confirm_cmd: 'gh api --hostname {host} repos/{path}/issues/{number}/events',
   copilot_logins: 'copilot-pull-request-reviewer,Copilot',
   poll_interval_sec: '60',
   copilot_wait_min: '30',
@@ -37,6 +38,12 @@ describe('parseDeliverSettings', () => {
     expect(() => parseDeliverSettings({ ...defaults, copilot_request_cmd: ' ' })).toThrow(
       'copilot_request_cmd'
     );
+    expect(() =>
+      parseDeliverSettings({ ...defaults, copilot_request_cmd: 'gh pr edit {nmber}' })
+    ).toThrow(/copilot_request_cmd: .*\{nmber\}/);
+    expect(() =>
+      parseDeliverSettings({ ...defaults, copilot_confirm_cmd: 'gh api repos/{owner}' })
+    ).toThrow(/copilot_confirm_cmd: .*\{owner\}/);
     expect(() => parseDeliverSettings({ ...defaults, checkstyle_cmd: '' })).toThrow(
       'checkstyle_cmd'
     );
@@ -52,6 +59,7 @@ describe('parseDeliverSettings', () => {
         copilot_mode: 'off',
         copilot_logins: '',
         copilot_request_cmd: '',
+        copilot_confirm_cmd: '{unknown}',
       }).copilotMode
     ).toBe('off');
   });

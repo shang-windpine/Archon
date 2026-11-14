@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import type { SnapshotThread } from '../../pack/devflow/.shared/lib/deliver-await.ts';
 import {
   controlDecision,
+  ESCALATION_CHOICES,
   fence,
   fixedReplies,
   reconcileDecisions,
@@ -19,13 +22,21 @@ const thread = (id: string, body = 'c'): SnapshotThread => ({
 });
 
 describe('controlDecision', () => {
-  const base = { previousRound: '', previousHasWork: '', previousPr: '', answer: '', firstPr: 0 };
+  const base = {
+    previousRound: '',
+    previousHasWork: '',
+    previousPr: '',
+    answer: '',
+    answerChoice: '',
+    firstPr: 0,
+  };
   test('round 1 always implements and ignores any answer', () => {
     expect(controlDecision({ ...base, answer: 'x', firstPr: 4 })).toEqual({
       round: 1,
       implement: true,
       prNumber: 4,
       answer: '',
+      skipCopilot: false,
     });
   });
   test('a later round implements on work or an answer, and keeps the PR act saw', () => {
@@ -43,8 +54,42 @@ describe('controlDecision', () => {
       answer: 'rerun done',
     });
   });
-  test('junk in a bound number throws', () => {
+  test('skip-copilot is no code work by itself; its text still is', () => {
+    const later = { ...base, previousRound: '1', previousPr: '7', previousHasWork: 'false' };
+    expect(controlDecision({ ...later, answerChoice: 'skip-copilot' })).toMatchObject({
+      implement: false,
+      skipCopilot: true,
+    });
+    expect(
+      controlDecision({ ...later, answerChoice: 'skip-copilot', answer: 'also rename x' })
+    ).toMatchObject({ implement: true, skipCopilot: true, answer: 'also rename x' });
+    expect(controlDecision({ ...later, answerChoice: 'continue' }).skipCopilot).toBe(false);
+  });
+  test('junk in a bound number or an undeclared choice throws', () => {
     expect(() => controlDecision({ ...base, previousRound: 'two' })).toThrow('not a whole number');
+    expect(() => controlDecision({ ...base, previousRound: '1', answerChoice: 'skip' })).toThrow(
+      'not one of continue, skip-copilot'
+    );
+  });
+  test('the choices are the escalate wait options devflow-deliver.yaml declares', () => {
+    const workflow = Bun.YAML.parse(
+      readFileSync(
+        join(import.meta.dir, '../../pack/devflow/devflow-deliver/devflow-deliver.yaml'),
+        'utf8'
+      )
+    ) as {
+      nodes: {
+        id: string;
+        loop_group?: {
+          nodes: { id: string; wait?: { form?: string; options?: { id: string }[] } }[];
+        };
+      }[];
+    };
+    const escalate = workflow.nodes
+      .flatMap(node => node.loop_group?.nodes ?? [])
+      .find(node => node.id === 'escalate');
+    expect(escalate?.wait?.form).toBe('select');
+    expect(escalate?.wait?.options?.map(option => option.id)).toEqual([...ESCALATION_CHOICES]);
   });
 });
 

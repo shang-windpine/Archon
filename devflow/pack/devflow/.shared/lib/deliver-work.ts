@@ -33,15 +33,35 @@ export interface ControlFacts {
   readonly previousPr: string;
   /** `$LOOP_PREV.escalate.output.text`: empty when the gate was skipped or this is round 1. */
   readonly answer: string;
+  /** `$LOOP_PREV.escalate.output.decision`: an ESCALATION_CHOICES id, empty like `answer`. */
+  readonly answerChoice: string;
   /** preflight's pr_number: 0 when no pull request existed at the start. */
   readonly firstPr: number;
 }
+
+/** The escalate wait's option ids, as devflow-deliver.yaml declares them. */
+export const ESCALATION_CHOICES = ['continue', 'skip-copilot'] as const;
+export type EscalationChoice = (typeof ESCALATION_CHOICES)[number];
 
 export interface ControlDecision {
   readonly round: number;
   readonly implement: boolean;
   readonly prNumber: number;
   readonly answer: string;
+  /** The person chose `skip-copilot`: stop requesting and waiting for Copilot for the run. */
+  readonly skipCopilot: boolean;
+}
+
+function escalationChoice(raw: string): EscalationChoice | null {
+  const text = raw.trim();
+  if (text === '') return null;
+  const choice = ESCALATION_CHOICES.find(candidate => candidate === text);
+  if (choice === undefined) {
+    throw new Error(
+      `the escalation answer chose ${JSON.stringify(raw)}, which is not one of ${ESCALATION_CHOICES.join(', ')}`
+    );
+  }
+  return choice;
 }
 
 function wholeNumber(raw: string, label: string): number {
@@ -52,16 +72,28 @@ function wholeNumber(raw: string, label: string): number {
   return Number(text);
 }
 
-/** Round 1 always implements; a later round implements when act left work or a person answered. */
+/**
+ * Round 1 always implements; a later round implements when act left work or a person
+ * answered with text. The choice alone is no code work: `skip-copilot` changes only what
+ * the round waits for.
+ */
 export function controlDecision(facts: ControlFacts): ControlDecision {
   const previous = wholeNumber(facts.previousRound, 'the previous round');
   const round = previous + 1;
   const answer = facts.answer.trim();
+  const choice = escalationChoice(facts.answerChoice);
   const prNumber =
     wholeNumber(facts.previousPr, 'the previous pull request number') || facts.firstPr;
-  if (round === 1) return { round, implement: true, prNumber: facts.firstPr, answer: '' };
+  if (round === 1)
+    return { round, implement: true, prNumber: facts.firstPr, answer: '', skipCopilot: false };
   const hasWork = facts.previousHasWork.trim() === 'true';
-  return { round, implement: hasWork || answer !== '', prNumber, answer };
+  return {
+    round,
+    implement: hasWork || answer !== '',
+    prNumber,
+    answer,
+    skipCopilot: choice === 'skip-copilot',
+  };
 }
 
 export interface WorkOrderParts {

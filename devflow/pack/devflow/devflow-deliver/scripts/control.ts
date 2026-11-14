@@ -5,15 +5,19 @@
  * `next-work.md` (accepted threads, CI failures this change caused, a base conflict)
  * plus the operator's answer to the previous round's escalation, when there was one.
  * Every answer is also appended to `human-answers.md`, which the judges read in later
- * rounds: an answer may decide a thread or a check, not only code.
+ * rounds: an answer may decide a thread or a check, not only code. An answer that chose
+ * `skip-copilot` writes `$ARTIFACTS_DIR/copilot-skipped`, which stays for the rest of the
+ * run and makes request-review and await treat `copilot_mode` as `off`.
  *
- * Bound inputs: previous_round, previous_has_work, previous_pr, answer (all `$LOOP_PREV`
- * text, empty on round 1), first_pr and requirement (preflight's).
+ * Bound inputs: previous_round, previous_has_work, previous_pr, answer, answer_choice
+ * (all `$LOOP_PREV` text, empty on round 1 or after a skipped escalation), first_pr and
+ * requirement (preflight's).
  */
 
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { emit, input, refuse } from 'archon:script';
 import { artifactPath, validateKey } from '../../.shared/lib/devflow.ts';
+import { COPILOT_SKIPPED_ARTIFACT } from '../../.shared/lib/deliver-settings.ts';
 import { controlDecision, fence, renderWorkOrder } from '../../.shared/lib/deliver-work.ts';
 
 function readIfExists(path: string): string | null {
@@ -28,6 +32,7 @@ try {
     previousHasWork: input('previous_has_work'),
     previousPr: input('previous_pr'),
     answer: input('answer'),
+    answerChoice: input('answer_choice'),
     firstPr: Number.isInteger(firstPr) && firstPr > 0 ? firstPr : 0,
   });
   const workOrder = artifactPath('work-order.md');
@@ -40,11 +45,19 @@ try {
         ? readIfExists(artifactPath('next-threads.json'))
         : null;
     const escalation = artifactPath('escalation.md');
-    if (decision.answer !== '') {
-      appendFileSync(
-        artifactPath('human-answers.md'),
-        `## Answer before round ${String(decision.round)}\n\n${fence(decision.answer, 8000)}\n\n`
+    if (decision.skipCopilot) {
+      writeFileSync(
+        artifactPath(COPILOT_SKIPPED_ARTIFACT),
+        `skip-copilot chosen before round ${String(decision.round)}\n`
       );
+    }
+    if (decision.answer !== '' || decision.skipCopilot) {
+      const heading = `## Answer before round ${String(decision.round)}`;
+      const choice = decision.skipCopilot
+        ? 'The operator chose to stop waiting for a Copilot review for the rest of this run.\n\n'
+        : '';
+      const text = decision.answer === '' ? '' : `${fence(decision.answer, 8000)}\n\n`;
+      appendFileSync(artifactPath('human-answers.md'), `${heading}\n\n${choice}${text}`);
     }
     writeFileSync(
       workOrder,

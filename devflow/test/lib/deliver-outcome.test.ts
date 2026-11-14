@@ -54,6 +54,8 @@ describe('computeRoundOutcome', () => {
       has_work: false,
       ask: false,
       reasons: [],
+      askReasons: [],
+      notes: [],
     });
   });
 
@@ -112,6 +114,32 @@ describe('computeRoundOutcome', () => {
     expect(outcome.done).toBe(false);
     expect({ has_work: outcome.has_work, ask: outcome.ask }).toEqual(expected);
     expect(outcome.reasons.length).toBeGreaterThan(0);
+    expect(outcome.askReasons.length > 0).toBe(expected.ask);
+    expect([...outcome.reasons].sort()).toEqual([...outcome.askReasons, ...outcome.notes].sort());
+  });
+
+  test('only what needs a person is an ask reason; progress and blockers are notes', () => {
+    // The E2E round: an accepted thread, a rerun issued, red checks, an open thread, and
+    // Copilot silent on the head. Only Copilot's silence needs a person.
+    const outcome = computeRoundOutcome(
+      facts({
+        copilot: 'timeout',
+        checks: 'red',
+        summary: redSummary('it'),
+        openThreads: 1,
+        decisions: [decision('t1', 'accept')],
+        ciJudgement: [judged('it', 'infra')],
+        rerunsIssued: 1,
+      })
+    );
+    expect(outcome.ask).toBe(true);
+    expect(outcome.askReasons).toEqual(['Copilot did not review the current head in time']);
+    expect(outcome.notes).toEqual([
+      '1 review thread(s) accepted for fixing',
+      '1 rerun(s) issued; waiting for their result',
+      'checks are red',
+      '1 review thread(s) unresolved',
+    ]);
   });
 
   test('declined threads that were resolved do not block done', () => {

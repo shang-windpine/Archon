@@ -205,7 +205,26 @@ describe('await', () => {
       },
     });
     expect(run.status).toBe(0);
-    expect(run.output()).toMatchObject({ copilot: 'request_failed', checks: 'green' });
+    const output = run.output();
+    expect(output).toMatchObject({ copilot: 'request_failed', checks: 'green' });
+    const snapshot = JSON.parse(readFileSync(String(output.snapshot_path), 'utf8'));
+    expect(snapshot.request_error).toBe('copilot_request_cmd exited 1');
+  });
+
+  test('the skip-copilot marker turns the Copilot wait off for the run', () => {
+    const { checkout, head } = gitCheckout(harness.root());
+    const run = harness.run('await', {
+      cwd: checkout,
+      inputs: inputs(head),
+      artifacts: { 'copilot-skipped': '' },
+      forge: {
+        'checks.state': [checks(head, [unit('build', 'green')])],
+        'pr.threads': [{ value: { ref: { repo: REPO, number: 7 }, threads: [] } }],
+      },
+    });
+    expect(run.status).toBe(0);
+    expect(run.output()).toMatchObject({ copilot: 'off', checks: 'green' });
+    expect(run.requests.some(r => r.op === 'pr.reviews')).toBe(false);
   });
 
   test('refuses a head that is not a commit SHA without calling the forge', () => {

@@ -132,8 +132,12 @@ export interface RoundOutcome {
   readonly done: boolean;
   readonly has_work: boolean;
   readonly ask: boolean;
-  /** One line per fact that blocks done, makes work, or needs a human. */
+  /** One line per fact that blocks done, makes work, or needs a human: work, asks, then status. */
   readonly reasons: readonly string[];
+  /** The facts that need a person; non-empty exactly when `ask`. */
+  readonly askReasons: readonly string[];
+  /** Status and progress: work handed to the next round, reruns, what still blocks done. */
+  readonly notes: readonly string[];
 }
 
 function names(units: readonly CheckUnit[]): string {
@@ -214,5 +218,12 @@ export function computeRoundOutcome(facts: RoundFacts): RoundOutcome {
     ask = true;
     asks.push('no progress: the round is not done, left no work and issued no rerun');
   }
-  return { done, has_work: hasWork, ask, reasons: [...work, ...asks, ...blocks] };
+  return {
+    done,
+    has_work: hasWork,
+    ask,
+    reasons: [...work, ...asks, ...blocks],
+    askReasons: asks,
+    notes: [...work, ...blocks],
+  };
 }

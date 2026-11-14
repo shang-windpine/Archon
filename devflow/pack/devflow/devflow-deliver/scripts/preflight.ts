@@ -77,6 +77,7 @@ try {
     local_verify_cmd: input('local_verify_cmd'),
     copilot_mode: input('copilot_mode'),
     copilot_request_cmd: input('copilot_request_cmd'),
+    copilot_confirm_cmd: input('copilot_confirm_cmd'),
     copilot_logins: input('copilot_logins'),
     poll_interval_sec: input('poll_interval_sec'),
     copilot_wait_min: input('copilot_wait_min'),

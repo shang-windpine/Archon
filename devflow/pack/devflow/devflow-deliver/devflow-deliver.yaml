@@ -8,9 +8,10 @@ description: |
   checks, has one agent judge the open threads and another the red checks, then
   replies to and resolves declined threads, reruns infrastructure failures once per
   head, or hands accepted threads, failures this change caused and base conflicts to
-  the next round. Anything a person must decide stops at one message gate; the answer
-  becomes the next round's work order. The pull request stays a draft and nothing is
-  merged. State for devflow-verify lands in $STATE_DIR/devflow/<KEY>/.
+  the next round. Anything a person must decide stops at one gate: continue, or stop
+  waiting for Copilot for the rest of the run; the answer's text becomes the next
+  round's work order. The pull request stays a draft and nothing is merged. State for
+  devflow-verify lands in $STATE_DIR/devflow/<KEY>/.
 
   Use when: a finalized requirement should become a reviewed, CI-green draft PR -
   `archon workflow run devflow-deliver --branch <feature-branch> --input key=<KEY>`.
@@ -60,8 +61,8 @@ nodes:
 
   # One round per iteration. `escalate` is the body's only wait and its sole terminal
   # sink; every other node leads to it. The loop ends only on act's `done`, never on
-  # the wait, which a round without a question skips. An answered escalation grants one
-  # round beyond max_iterations.
+  # the wait, which a round without a question skips; only control reads the wait's
+  # answer. An answered escalation grants one round beyond max_iterations.
   - id: rounds
     depends_on: [preflight]
     loop_group:
@@ -81,6 +82,7 @@ nodes:
             previous_has_work: "$LOOP_PREV.act.output.has_work"
             previous_pr: "$LOOP_PREV.act.output.pr_number"
             answer: "$LOOP_PREV.escalate.output.text"
+            answer_choice: "$LOOP_PREV.escalate.output.decision"
             first_pr: "$preflight.output.pr_number"
             requirement: "$preflight.output.requirement_path"
           output_format:
@@ -195,11 +197,13 @@ nodes:
             required: [pr, pushed, head_revision, answered]
             additionalProperties: false
 
+        # The request (at most 120 s), and up to five confirm reads (60 s each) with 14 s of
+        # backoff between the last four.
         - id: request-review
           script: request-review
           runtime: bun
           depends_on: [publish]
-          timeout: 180000
+          timeout: 600000
           with:
             repo: "$preflight.output.repo"
             pr_number: "$publish.output.pr.number"
@@ -314,16 +318,26 @@ nodes:
             required: [done, has_work, ask, reruns, summary, report_path, pr_number, pr_url]
             additionalProperties: false
 
+        # The engine prints each option's answer command with the run id when it pauses
+        # (and `archon workflow attention` lists them).
         - id: escalate
           depends_on: [act]
           when: "$act.output.ask == 'true'"
           wait:
-            form: message
+            form: select
+            options:
+              - id: continue
+                label: "Continue"
+                does: "Run another round. Your text, if any, becomes the next round's work order."
+              - id: skip-copilot
+                label: "Stop waiting for Copilot"
+                does: >-
+                  For the rest of this run, do not request or wait for a Copilot review,
+                  then continue. Your text is still the work order.
             attention: >-
-              devflow-deliver $INPUTS.key, round $control.output.round, needs a decision:
-              $act.output.summary. Details and how to answer: $act.output.report_path
-              (pull request $act.output.pr_url). Your answer becomes the next round's
-              work order.
+              devflow-deliver $INPUTS.key, round $control.output.round,
+              $act.output.summary. Details and what to write in your answer:
+              $act.output.report_path (pull request $act.output.pr_url).
 
   - id: summarize
     command: summarize

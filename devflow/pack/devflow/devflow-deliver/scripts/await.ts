@@ -4,7 +4,8 @@
  * snapshot for the judges and act.
  *
  * Copilot counts as done only for a review whose commit is the head and whose author is
- * one of `copilot_logins`. Checks count as settled only for an observation of the head
+ * one of `copilot_logins`; with the `$ARTIFACTS_DIR/copilot-skipped` marker control
+ * writes for a `skip-copilot` answer, `copilot_mode` is `off`. Checks count as settled only for an observation of the head
  * with no unit pending (summarizeChecks), and not while a rerun this pack issued on the
  * head has not visibly started. Both deadlines (`copilot_wait_min`, `ci_wait_min`, at
  * most 140 minutes, checked by preflight) end before the node's 150-minute timeout.
@@ -37,7 +38,10 @@ import {
   unresolvedThreads,
 } from '../../.shared/lib/deliver-await.ts';
 import type { AwaitChecks, AwaitCopilot } from '../../.shared/lib/deliver-outcome.ts';
-import { parseAwaitSettings } from '../../.shared/lib/deliver-settings.ts';
+import {
+  COPILOT_SKIPPED_ARTIFACT,
+  parseAwaitSettings,
+} from '../../.shared/lib/deliver-settings.ts';
 import { artifactPath } from '../../.shared/lib/devflow.ts';
 import { git } from '../../.shared/lib/git.ts';
 import type { Repo } from '../../.shared/lib/identity.ts';
@@ -97,6 +101,10 @@ try {
   if (!Number.isInteger(number) || number <= 0)
     throw new Error(`pr_number is not a pull request number: ${input('pr_number')}`);
   const ref = { repo, number };
+  // A person answered an escalation with skip-copilot: no Copilot wait for the rest of the run.
+  const copilotMode = existsSync(artifactPath(COPILOT_SKIPPED_ARTIFACT))
+    ? 'off'
+    : settings.copilotMode;
   const logins = normalizeLogins(settings.copilotLogins);
   const requestError = input('request_error').trim();
   const issued = issuedReruns();
@@ -112,12 +120,12 @@ try {
   for (;;) {
     const now = Date.now();
     if (copilot === null) {
-      if (settings.copilotMode !== 'off') {
+      if (copilotMode !== 'off') {
         const reviews = read('forge pr.reviews', () => forge('pr.reviews', { ref }));
         if (reviews !== undefined) review = copilotReviewForHead(reviews.items, head, logins);
       }
       copilot = copilotVerdict({
-        mode: settings.copilotMode,
+        mode: copilotMode,
         review,
         requestError,
         now,
@@ -180,6 +188,7 @@ try {
         base,
         base_revision: baseRevision,
         copilot,
+        request_error: requestError,
         copilot_review:
           review === undefined
             ? null

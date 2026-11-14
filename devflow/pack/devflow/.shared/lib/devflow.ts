@@ -127,8 +127,13 @@ export function renderCommand(template: string, vars: Readonly<Record<string, st
 export interface RunCommandOptions {
   readonly cwd: string;
   readonly timeoutMs: number;
-  /** Receives the command's combined stdout and stderr; overwritten. */
+  /** Receives the command's combined stdout and stderr (only stderr with `stdoutPath`); overwritten. */
   readonly logPath: string;
+  /**
+   * Receives the command's stdout alone, overwritten, for a caller that parses it; stderr
+   * then goes to `logPath` without it.
+   */
+  readonly stdoutPath?: string;
   /** Characters of the log's end to return; default 4000. */
   readonly tailChars?: number;
 }
@@ -137,7 +142,7 @@ export interface RunCommandResult {
   /** The exit code; null when the command ended on a signal (including the timeout kill). */
   readonly code: number | null;
   readonly timedOut: boolean;
-  /** The last `tailChars` characters of the combined output. */
+  /** The last `tailChars` characters of `logPath`. */
   readonly outputTail: string;
 }
 
@@ -158,7 +163,7 @@ function readTail(path: string, chars: number): string {
 
 /**
  * Run an operator-configured command with `sh -c`, its combined output written to
- * `logPath`. The command runs in its own process group so a timeout kills everything
+ * `logPath` (stdout to `stdoutPath` instead, when given). The command runs in its own process group so a timeout kills everything
  * it started (a build tool's forked JVMs included), not only the shell. Never throws
  * for a failing command: the caller decides what a nonzero exit means. The command
  * text is not logged: an operator's command can carry a credential.
@@ -169,13 +174,18 @@ export async function runCommand(
 ): Promise<RunCommandResult> {
   mkdirSync(dirname(options.logPath), { recursive: true });
   const fd = openSync(options.logPath, 'w');
+  let outFd = fd;
   let timedOut = false;
   let code: number | null;
   try {
+    if (options.stdoutPath !== undefined) {
+      mkdirSync(dirname(options.stdoutPath), { recursive: true });
+      outFd = openSync(options.stdoutPath, 'w');
+    }
     const child = spawn('sh', ['-c', command], {
       cwd: options.cwd,
       env: process.env,
-      stdio: ['ignore', fd, fd],
+      stdio: ['ignore', outFd, fd],
       detached: true,
     });
     const timer = setTimeout(() => {
@@ -197,6 +207,7 @@ export async function runCommand(
       clearTimeout(timer);
     }
   } finally {
+    if (outFd !== fd) closeSync(outFd);
     closeSync(fd);
   }
   return { code, timedOut, outputTail: readTail(options.logPath, options.tailChars ?? 4000) };

@@ -64,7 +64,7 @@ const threadsAnswer = (...threads: ReturnType<typeof forgeThread>[]): FakeAnswer
   value: { ref: REF, threads },
 });
 
-function snapshot(threads: string[], red: CheckUnit[]) {
+function snapshot(threads: string[], red: CheckUnit[], extra: Record<string, unknown> = {}) {
   const units = [...red, unit('lint', 'green')];
   const value = checksValue(units);
   return JSON.stringify({
@@ -91,6 +91,7 @@ function snapshot(threads: string[], red: CheckUnit[]) {
       note: '',
     })),
     conflict: false,
+    ...extra,
   });
 }
 
@@ -208,6 +209,42 @@ describe('act', () => {
     expect(run.requests.some(r => r.op === 'checks.rerun')).toBe(false);
     const report = readFileSync(join(run.artifacts, 'escalation.md'), 'utf8');
     expect(report).toContain('still red after one rerun on this head: build');
+    expect(report).toContain('## How to answer');
+    expect(report).toContain('`skip-copilot`');
+  });
+
+  test('the summary and the report put what needs a person ahead of the round status', () => {
+    const run = harness.run('act', {
+      artifacts: {
+        'snapshot.json': snapshot(['PRRT_1'], [unit('build', 'red')], {
+          copilot: 'request_failed',
+          request_error: 'Copilot was not registered as a reviewer after the request',
+        }),
+      },
+      inputs: inputs(
+        [{ thread: 'PRRT_1', decision: 'accept', reason: 'Reject null names.', reply: '' }],
+        [{ name: 'build', cause: 'pr_caused', evidence: 'compile error', fix: 'fix it' }]
+      ),
+      forge: { 'pr.threads': [threadsAnswer(forgeThread('PRRT_1', false))] },
+    });
+    expect(run.status).toBe(0);
+    const output = run.output();
+    expect(output).toMatchObject({ done: false, ask: true, has_work: true });
+    expect(output.summary).toBe(
+      'needs you: requesting a Copilot review failed; status: 1 review thread(s) accepted for fixing; ' +
+        'CI failure(s) caused by this change: build; checks are red; 1 review thread(s) unresolved'
+    );
+    const report = readFileSync(join(run.artifacts, 'escalation.md'), 'utf8');
+    const needs = report.indexOf('## Needs your decision');
+    const status = report.indexOf('## Status this round');
+    expect(needs).toBeGreaterThan(-1);
+    expect(status).toBeGreaterThan(needs);
+    expect(report.slice(needs, status)).toContain('- requesting a Copilot review failed');
+    expect(report.slice(needs, status)).toContain(
+      'Copilot review request: Copilot was not registered as a reviewer'
+    );
+    expect(report.slice(needs, status)).not.toContain('checks are red');
+    expect(report.slice(status)).toContain('- checks are red');
   });
 
   test('a rerun with an unknown outcome is settled by reading the checks back, never repeated', () => {

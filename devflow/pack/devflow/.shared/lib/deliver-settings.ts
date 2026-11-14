@@ -8,10 +8,18 @@
  * Pure: no `archon:script` import.
  */
 
-import { parseEnum, parseList, parsePositiveInt } from './devflow.ts';
+import { copilotCommandVars } from './copilot.ts';
+import { parseEnum, parseList, parsePositiveInt, renderCommand } from './devflow.ts';
 
 export const COPILOT_MODES = ['request', 'auto', 'off'] as const;
 export type CopilotMode = (typeof COPILOT_MODES)[number];
+
+/**
+ * The `$ARTIFACTS_DIR` file control writes when a person answers an escalation with
+ * `skip-copilot`. It is never removed, so request-review and await treat `copilot_mode`
+ * as `off` for the rest of the run.
+ */
+export const COPILOT_SKIPPED_ARTIFACT = 'copilot-skipped';
 
 /**
  * The longest a wait may be configured to. The await node's `timeout:` is 150 minutes;
@@ -24,6 +32,7 @@ export interface RawDeliverSettings {
   readonly local_verify_cmd: string;
   readonly copilot_mode: string;
   readonly copilot_request_cmd: string;
+  readonly copilot_confirm_cmd: string;
   readonly copilot_logins: string;
   readonly poll_interval_sec: string;
   readonly copilot_wait_min: string;
@@ -45,6 +54,7 @@ export interface DeliverSettings extends AwaitSettings {
   readonly checkstyleCmd: string;
   readonly localVerifyCmd: string;
   readonly copilotRequestCmd: string;
+  readonly copilotConfirmCmd: string;
 }
 
 function waitMinutes(raw: string, fallback: number, label: string): number {
@@ -93,6 +103,21 @@ export function parseDeliverSettings(raw: RawDeliverSettings): DeliverSettings {
   if (waits.copilotMode === 'request' && copilotRequestCmd === '') {
     throw new Error('copilot_mode is request but copilot_request_cmd is empty');
   }
+  const copilotConfirmCmd = raw.copilot_confirm_cmd.trim();
+  if (waits.copilotMode === 'request') {
+    // A template's unknown token would otherwise refuse only after round 1 has pushed.
+    const sample = copilotCommandVars({ host: 'github.com', path: 'o/r' }, '1');
+    for (const [name, template] of [
+      ['copilot_request_cmd', copilotRequestCmd],
+      ['copilot_confirm_cmd', copilotConfirmCmd],
+    ] as const) {
+      try {
+        renderCommand(template, sample);
+      } catch (error) {
+        throw new Error(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
   if (raw.checkstyle_cmd.trim() === '') {
     throw new Error('checkstyle_cmd is empty; set it to the project’s checkstyle command');
   }
@@ -101,5 +126,6 @@ export function parseDeliverSettings(raw: RawDeliverSettings): DeliverSettings {
     checkstyleCmd: raw.checkstyle_cmd.trim(),
     localVerifyCmd: raw.local_verify_cmd.trim(),
     copilotRequestCmd,
+    copilotConfirmCmd,
   };
 }
