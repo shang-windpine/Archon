@@ -1,0 +1,50 @@
+# Round 2, after the person answered revise in round 1: control hands the draft the refine
+# log as the person's feedback, the reviewer approves, and the person finalizes with a
+# note that `status` passes to finalize for the decision log. (A dry run runs one round;
+# the round-1 revise answer is control's input here, which control.ts and its unit tests
+# turn into human_feedback_path.)
+intake:
+  key: DEMO-1
+  state_dir: "/stub/state/devflow/DEMO-1"
+  intake_path: "/stub/artifacts/intake.md"
+  sources: [brief_file]
+  has_previous: false
+  previous_requirement_path: ""
+  warnings: []
+explore: { feasible: "yes", summary: "stub: Greeter gains one static method." }
+control:
+  finalize: false
+  round: 2
+  human_feedback_path: "/stub/state/devflow/DEMO-1/refine-log.md"
+  refine_log_path: "/stub/state/devflow/DEMO-1/refine-log.md"
+  requirement_path: "/stub/artifacts/requirement.md"
+  review_path: "/stub/artifacts/review.md"
+draft: { summary: "stub: null names now return 'Goodbye'", open_questions: 0 }
+review: { verdict: approve, needs_human: false, questions: [], summary: "stub: approve after feedback." }
+record:
+  ask: true
+  round: 2
+  verdict: approve
+  summary: "stub: approve after feedback."
+  questions_text: "(none)"
+  requirement_path: "/stub/artifacts/requirement.md"
+  review_path: "/stub/artifacts/review.md"
+  refine_log_path: "/stub/state/devflow/DEMO-1/refine-log.md"
+  recommendation: { option: finalize, why: "stub: approved", confidence: medium }
+gate: { decision: finalize, text: "ship it" }
+status:
+  finalized: true
+  rounds: 3
+  note: "ship it"
+  last_verdict: approve
+  last_summary: "stub: approve after feedback."
+  requirement_path: "/stub/artifacts/requirement.md"
+  review_path: "/stub/artifacts/review.md"
+  refine_log_path: "/stub/state/devflow/DEMO-1/refine-log.md"
+finalize: { requirement_path: "/stub/state/devflow/DEMO-1/requirement.md", history_path: "", jira_comment: skipped }
+fixture:
+  expect: completed
+  inputs: { key: DEMO-1 }
+  reached: [control, draft, review, record, gate, status, finalize]
+  resolved-text-contains:
+    draft: "/stub/state/devflow/DEMO-1/refine-log.md"

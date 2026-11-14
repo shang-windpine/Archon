@@ -1,0 +1,10 @@
+{
+  // Inherits the repository's Biome settings; only excludes the two files that
+  // `archon script types` and `archon script preload` generate (each has a `--check`
+  // mode that owns its freshness), as the root config excludes the engine's own copy.
+  "root": false,
+  "extends": "//",
+  "files": {
+    "includes": ["**", "!types/archon-script.d.ts", "!test/archon-script.preload.ts"]
+  }
+}

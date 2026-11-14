@@ -1,0 +1,17 @@
+# <repo>/.archon/config.yaml — written by devflow/scripts/install.sh when absent.
+# Reference: https://archon.diy/reference/configuration/ (repo config keys are strict;
+# an unknown key refuses every run).
+
+# Default provider for nodes that name no model alias. The repo config key is
+# `assistant` (the home config's key is `defaultAssistant`).
+assistant: claude
+
+worktree:
+  # The branch devflow-deliver starts feature worktrees from. It must exist on the
+  # remote. install.sh fills it from `origin/HEAD`; change it when features branch
+  # from another branch (for example develop).
+  baseBranch: __BASE_BRANCH__
+  # `.archon/` is git-excluded, so a new worktree would not see the pack settings
+  # file; a run reads `.archon/packs/devflow.yaml` from its own checkout.
+  copyFiles:
+    - .archon/packs/

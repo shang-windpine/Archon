@@ -1,0 +1,51 @@
+# Both sides planned. The question names the plan and results files from assemble's
+# output, and triage reads the answer and both paths.
+context: &context
+  key: DEMO-1
+  requirement_path: /state/devflow/DEMO-1/requirement.md
+  change_summary_path: /state/devflow/DEMO-1/change-summary.md
+  context_path: /artifacts/context.md
+  code_path: /repo
+  pr_url: https://github.com/example/repo/pull/7
+  worktree_path: /worktrees/feat
+  plan_path: /state/devflow/DEMO-1/verify-plan.md
+  results_path: /state/devflow/DEMO-1/verify-results.md
+  report_path: /state/devflow/DEMO-1/verify-report.md
+  followup_path: /state/devflow/DEMO-1/followup-work.md
+  files_source: forge
+  changed_files: 3
+  warnings: 0
+classify: { ui: true, api: true, reason: "stub: a page and a controller changed" }
+plan-ui:
+  cases:
+    - { id: UI-1, title: "stub: editor saves a draft", criterion: AC-1 }
+  summary: "stub: one UI case"
+plan-api:
+  cases:
+    - { id: API-1, title: "stub: POST creates a draft", criterion: AC-2 }
+    - { id: API-2, title: "stub: guest token is refused", criterion: AC-2 }
+  summary: "stub: two API cases"
+plan-review: { ok: true, gaps: 0, summary: "stub: covered" }
+assemble:
+  plan_path: /state/devflow/DEMO-1/verify-plan.md
+  results_path: /state/devflow/DEMO-1/verify-results.md
+  cases: 3
+  ui_cases: 1
+  api_cases: 2
+  headline: "3 manual test case(s) planned (UI 1, External API 2). The plan review found no gaps."
+run-tests: { text: "results are in the file" }
+triage:
+  all_passed: true
+  failed: 0
+  blocked: 0
+  not_run: 0
+  followup_written: false
+  summary: "stub: all three cases passed"
+fixture:
+  inputs: { key: DEMO-1 }
+  expect: completed
+  authored: succeeded
+  reached: [context, classify, plan-ui, plan-api, plan-review, assemble, run-tests, triage]
+  resolved-text-contains:
+    run-tests: "Test plan: /state/devflow/DEMO-1/verify-plan.md\nResults file: /state/devflow/DEMO-1/verify-results.md"
+    triage: "results are in the file"

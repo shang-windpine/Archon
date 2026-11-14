@@ -1,0 +1,67 @@
+# The devflow pack's settings (DESIGN §3). A project sets them in
+# `.archon/packs/devflow.yaml`, under `settings:`; `--input name=value` overrides one
+# for a single run. Every value is text: a list is comma-separated.
+inputs:
+  jira_view_cmd:
+    default: "jira issue view {key} --plain --comments 30"
+    description: >-
+      Command that prints a Jira issue; {key} becomes the KEY. Empty: no Jira fetch.
+  jira_comment_cmd:
+    default: ""
+    description: >-
+      Command that posts a Jira comment; {key} becomes the KEY and {file} the path of the
+      comment body. Empty: never write to Jira.
+  checkstyle_cmd:
+    default: "mvn -B -q checkstyle:check"
+    description: Local checkstyle command; exit code 0 means it passed.
+  local_verify_cmd:
+    default: ""
+    description: Extra fast local check run before every push. Empty skips it.
+  copilot_mode:
+    type: enum
+    values: [request, auto, off]
+    default: request
+    description: >-
+      request: the pack requests a Copilot review after every push. auto: a repository
+      ruleset requests it and the pack only waits. off: the pack does not wait for Copilot.
+  copilot_request_cmd:
+    default: "gh pr edit {number} --repo {repo} --add-reviewer @copilot"
+    description: Command that requests a Copilot review; {number} and {repo} are filled in.
+  copilot_logins:
+    type: list
+    default: "copilot-pull-request-reviewer,copilot-pull-request-reviewer[bot],copilot,Copilot"
+    description: Logins that identify a Copilot review author (case-insensitive exact match).
+  poll_interval_sec:
+    default: "60"
+    description: Seconds between forge polls.
+  copilot_wait_min:
+    default: "30"
+    description: Minutes to wait for a Copilot review of the current head.
+  ci_wait_min:
+    default: "90"
+    description: Minutes to wait for CI to settle.
+  required_checks:
+    type: list
+    default: ""
+    description: >-
+      Check names that must be present and green (exact match). Empty: the forge summary
+      must be green.
+  refine_human:
+    type: enum
+    values: [auto, always, never]
+    default: auto
+    description: >-
+      When a devflow-refine round asks a person to finalize or revise. auto: when the
+      reviewer needs a person or approves. always: every round. never: only when the
+      reviewer approves (finalizing always takes a person).
+  ui_hint:
+    default: ""
+    description: Free text telling agents which paths or modules are the UI side.
+  api_hint:
+    default: ""
+    description: Free text telling agents which paths or modules are the External API side.
+  project_notes:
+    default: ""
+    description: >-
+      Repository path of a guidance file for agents (such as AGENTS.md). Empty: the agent
+      finds the project's guidance itself.

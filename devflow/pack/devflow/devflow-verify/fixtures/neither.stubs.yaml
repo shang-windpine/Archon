@@ -1,0 +1,41 @@
+# Neither side is touched: no planner runs, plan-review still checks that claim, and the
+# person is still asked to confirm before the run can pass.
+context:
+  key: DEMO-1
+  requirement_path: /state/devflow/DEMO-1/requirement.md
+  change_summary_path: ""
+  context_path: /artifacts/context.md
+  code_path: /repo
+  pr_url: ""
+  worktree_path: ""
+  plan_path: /state/devflow/DEMO-1/verify-plan.md
+  results_path: /state/devflow/DEMO-1/verify-results.md
+  report_path: /state/devflow/DEMO-1/verify-report.md
+  followup_path: /state/devflow/DEMO-1/followup-work.md
+  files_source: git
+  changed_files: 1
+  warnings: 1
+classify: { ui: false, api: false, reason: "stub: a build-only change" }
+plan-review: { ok: true, gaps: 0, summary: "stub: nothing a person can exercise changed" }
+assemble:
+  plan_path: /state/devflow/DEMO-1/verify-plan.md
+  results_path: /state/devflow/DEMO-1/verify-results.md
+  cases: 0
+  ui_cases: 0
+  api_cases: 0
+  headline: "No manual test cases were planned: the change was classified as touching neither the UI nor the External API. The plan review found no gaps."
+run-tests: { text: "Confirmed: no manual test needed." }
+triage:
+  all_passed: true
+  failed: 0
+  blocked: 0
+  not_run: 0
+  followup_written: false
+  summary: "stub: the person confirmed no manual test is needed"
+fixture:
+  inputs: { key: DEMO-1 }
+  expect: completed
+  authored: succeeded
+  reached: [plan-review, assemble, run-tests, triage]
+  resolved-text-contains:
+    run-tests: "When no case was planned, confirm that no manual test is needed"

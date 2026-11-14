@@ -1,0 +1,223 @@
+name: devflow-verify
+description: |
+  Step 8 of devflow: plan the local manual test of a delivered requirement, hand it to a
+  person, and triage what they report. Reads the KEY's requirement.md and, when present,
+  delivery.json and change-summary.md (otherwise the change is read from git), decides
+  whether the change touches the UI and/or the External API, writes a manual test plan
+  whose preconditions are test data only, has a second model review it, and asks a person
+  to start the services, run the plan and report results. Failures become
+  followup-work.md for the next devflow-deliver run.
+
+  Use when: "verify ABC-123", "write the manual test plan", "local test of the delivered change".
+  NOT for: starting services or configuring an environment (the person does that), writing
+  code, or touching the pull request.
+  Writes only under $STATE_DIR/devflow/<KEY>/ and this run's artifacts.
+
+worktree:
+  enabled: false
+mutates_checkout: false
+
+inputs:
+  key:
+    required: true
+    description: Jira key or slug naming $STATE_DIR/devflow/<KEY>/, which must hold requirement.md.
+
+returns: triage
+outcome_field: all_passed
+
+nodes:
+  - id: context
+    script: context
+    runtime: bun
+    mutates_checkout: false
+    # pr.files is one forge read; the bound only stops a hung host command.
+    timeout: 180000
+    output_format:
+      type: object
+      properties:
+        key: { type: string }
+        requirement_path: { type: string }
+        change_summary_path: { type: string }
+        context_path: { type: string }
+        code_path: { type: string }
+        pr_url: { type: string }
+        worktree_path: { type: string }
+        plan_path: { type: string }
+        results_path: { type: string }
+        report_path: { type: string }
+        followup_path: { type: string }
+        files_source: { type: string, enum: [forge, git, none] }
+        changed_files: { type: integer }
+        warnings: { type: integer }
+      required:
+        - key
+        - requirement_path
+        - change_summary_path
+        - context_path
+        - code_path
+        - pr_url
+        - worktree_path
+        - plan_path
+        - results_path
+        - report_path
+        - followup_path
+        - files_source
+        - changed_files
+        - warnings
+      additionalProperties: false
+
+  - id: classify
+    depends_on: [context]
+    command: classify
+    model: "@devflow-main"
+    mutates_checkout: false
+    with:
+      context_path: $context.output.context_path
+      requirement_path: $context.output.requirement_path
+      change_summary_path: $context.output.change_summary_path
+    output_format:
+      type: object
+      properties:
+        ui: { type: boolean }
+        api: { type: boolean }
+        reason: { type: string }
+      required: [ui, api, reason]
+      additionalProperties: false
+
+  - id: plan-ui
+    depends_on: [classify]
+    when: "$classify.output.ui == 'true'"
+    command: plan-ui
+    model: "@devflow-main"
+    mutates_checkout: false
+    with:
+      context_path: $context.output.context_path
+      requirement_path: $context.output.requirement_path
+      change_summary_path: $context.output.change_summary_path
+      classify_reason: $classify.output.reason
+    output_format: &plan_output
+      type: object
+      properties:
+        cases:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              title: { type: string }
+              criterion: { type: string }
+            required: [id, title, criterion]
+            additionalProperties: false
+        summary: { type: string }
+      required: [cases, summary]
+      additionalProperties: false
+
+  - id: plan-api
+    depends_on: [classify]
+    when: "$classify.output.api == 'true'"
+    command: plan-api
+    model: "@devflow-main"
+    mutates_checkout: false
+    with:
+      context_path: $context.output.context_path
+      requirement_path: $context.output.requirement_path
+      change_summary_path: $context.output.change_summary_path
+      classify_reason: $classify.output.reason
+    output_format: *plan_output
+
+  # Runs with no side plan too: it then checks the "nothing to test by hand" claim.
+  - id: plan-review
+    depends_on: [classify, plan-ui, plan-api]
+    trigger_rule: none_failed_min_one_success
+    command: plan-review
+    model: "@devflow-cross"
+    mutates_checkout: false
+    with:
+      context_path: $context.output.context_path
+      requirement_path: $context.output.requirement_path
+      ui: $classify.output.ui
+      api: $classify.output.api
+      classify_reason: $classify.output.reason
+    output_format:
+      type: object
+      properties:
+        ok: { type: boolean }
+        gaps: { type: integer }
+        summary: { type: string }
+      required: [ok, gaps, summary]
+      additionalProperties: false
+
+  - id: assemble
+    depends_on: [context, classify, plan-ui, plan-api, plan-review]
+    trigger_rule: none_failed_min_one_success
+    script: assemble
+    runtime: bun
+    mutates_checkout: false
+    timeout: 60000
+    with:
+      plan_path: $context.output.plan_path
+      results_path: $context.output.results_path
+      requirement_path: $context.output.requirement_path
+      context_path: $context.output.context_path
+      ui: $classify.output.ui
+      api: $classify.output.api
+      classify_reason: $classify.output.reason
+      ui_plan: { from: $plan-ui.output, if_skipped: null }
+      api_plan: { from: $plan-api.output, if_skipped: null }
+      review_ok: $plan-review.output.ok
+      review_gaps: $plan-review.output.gaps
+      review_summary: $plan-review.output.summary
+    output_format:
+      type: object
+      properties:
+        plan_path: { type: string }
+        results_path: { type: string }
+        cases: { type: integer }
+        ui_cases: { type: integer }
+        api_cases: { type: integer }
+        headline: { type: string }
+      required: [plan_path, results_path, cases, ui_cases, api_cases, headline]
+      additionalProperties: false
+
+  - id: run-tests
+    depends_on: [assemble]
+    wait:
+      form: message
+      attention: |
+        Manual verification of $INPUTS.key is ready. $assemble.output.headline
+
+        Test plan: $assemble.output.plan_path
+        Results file: $assemble.output.results_path
+
+        Start, build and configure the services and the environment yourself; the plan does
+        not cover that, and its preconditions are only the test data to prepare. Run the
+        cases, then either fill in every line of the results file (`<ID> | PASS, FAIL or
+        BLOCKED | notes`) and answer "results are in the file", or write the results in your
+        answer. When no case was planned, confirm that no manual test is needed, or describe
+        what you tested and found.
+
+  - id: triage
+    depends_on: [run-tests]
+    command: triage
+    model: "@devflow-main"
+    mutates_checkout: false
+    with:
+      answer: $run-tests.output.text
+      plan_path: $assemble.output.plan_path
+      results_path: $assemble.output.results_path
+      planned_cases: $assemble.output.cases
+      requirement_path: $context.output.requirement_path
+      context_path: $context.output.context_path
+      report_path: $context.output.report_path
+      followup_path: $context.output.followup_path
+    output_format:
+      type: object
+      properties:
+        all_passed: { type: boolean }
+        failed: { type: integer }
+        blocked: { type: integer }
+        not_run: { type: integer }
+        followup_written: { type: boolean }
+        summary: { type: string }
+      required: [all_passed, failed, blocked, not_run, followup_written, summary]
+      additionalProperties: false

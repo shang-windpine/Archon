@@ -1,0 +1,359 @@
+name: devflow-deliver
+description: |
+  devflow steps 6-7: implement a requirement devflow-refine finalized, open a draft
+  pull request, and run review rounds until GitHub Copilot has reviewed the head, CI
+  is green and no review thread is open. Each round implements its work order with
+  focused checks, runs the local checkstyle (and optional local verify) command,
+  pushes without force, requests a Copilot review, waits for the review and the
+  checks, has one agent judge the open threads and another the red checks, then
+  replies to and resolves declined threads, reruns infrastructure failures once per
+  head, or hands accepted threads, failures this change caused and base conflicts to
+  the next round. Anything a person must decide stops at one message gate; the answer
+  becomes the next round's work order. The pull request stays a draft and nothing is
+  merged. State for devflow-verify lands in $STATE_DIR/devflow/<KEY>/.
+
+  Use when: a finalized requirement should become a reviewed, CI-green draft PR -
+  `archon workflow run devflow-deliver --branch <feature-branch> --input key=<KEY>`.
+  NOT for: refining the requirement (devflow-refine), local manual testing
+  (devflow-verify), marking a PR ready, or merging.
+
+inputs:
+  key:
+    required: true
+    description: >-
+      The Jira key or slug devflow-refine finalized the requirement under
+      ($STATE_DIR/devflow/<KEY>/requirement.md).
+  pr:
+    default: ""
+    description: >-
+      The number of an open pull request on this run's branch to continue. Empty finds
+      the open pull request whose head is the branch, or opens a draft one.
+
+returns: finish
+outcome_field: done
+
+nodes:
+  # Refuses before any agent spends: requirement, settings, branch, forge access, gh,
+  # and the named pull request. Writes round 1's work order.
+  - id: preflight
+    script: preflight
+    runtime: bun
+    timeout: 300000
+    output_format:
+      type: object
+      properties:
+        repo:
+          type: object
+          properties:
+            host: { type: string }
+            path: { type: string }
+          required: [host, path]
+          additionalProperties: false
+        base: { type: string }
+        head: { type: string }
+        requirement_path: { type: string }
+        has_followup: { type: boolean }
+        # 0 when no open pull request exists yet.
+        pr_number: { type: integer, minimum: 0 }
+      required: [repo, base, head, requirement_path, has_followup, pr_number]
+      additionalProperties: false
+
+  # One round per iteration. `escalate` is the body's only wait and its sole terminal
+  # sink; every other node leads to it. The loop ends only on act's `done`, never on
+  # the wait, which a round without a question skips. An answered escalation grants one
+  # round beyond max_iterations.
+  - id: rounds
+    depends_on: [preflight]
+    loop_group:
+      max_iterations: 6
+      on_exhausted: complete
+      fresh_context: true
+      until_bash: |
+        d=$act.output.done
+        [ "$d" = "true" ]
+      nodes:
+        - id: control
+          script: control
+          runtime: bun
+          timeout: 60000
+          with:
+            previous_round: "$LOOP_PREV.control.output.round"
+            previous_has_work: "$LOOP_PREV.act.output.has_work"
+            previous_pr: "$LOOP_PREV.act.output.pr_number"
+            answer: "$LOOP_PREV.escalate.output.text"
+            first_pr: "$preflight.output.pr_number"
+            requirement: "$preflight.output.requirement_path"
+          output_format:
+            type: object
+            properties:
+              round: { type: integer, minimum: 1 }
+              implement: { type: boolean }
+              pr_number: { type: integer, minimum: 0 }
+              has_pr: { type: boolean }
+              work_order: { type: string }
+            required: [round, implement, pr_number, has_pr, work_order]
+            additionalProperties: false
+
+        - id: implement
+          command: implement
+          model: '@devflow-main'
+          depends_on: [control]
+          when: "$control.output.implement == 'true'"
+          output_format:
+            type: object
+            properties:
+              summary: { type: string }
+              commits: { type: integer, minimum: 0 }
+              threads:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    thread: { type: string }
+                    status: { type: string, enum: [fixed, not_fixed] }
+                    note: { type: string }
+                  required: [thread, status, note]
+                  additionalProperties: false
+            required: [summary, commits, threads]
+            additionalProperties: false
+
+        # Exit 0 even when a command fails: the result is `ok`, so fix-style can run.
+        - id: checkstyle
+          script: checkstyle
+          runtime: bun
+          depends_on: [control, implement]
+          trigger_rule: none_failed_min_one_success
+          timeout: 2700000
+          output_format:
+            type: object
+            properties:
+              ok: { type: boolean }
+              style_ok: { type: boolean }
+              verify_ok: { type: boolean }
+              log_path: { type: string }
+              verify_log_path: { type: string }
+            required: [ok, style_ok, verify_ok, log_path, verify_log_path]
+            additionalProperties: false
+
+        # A plain loop, legal inside the body (it holds no wait). Its until_bash reruns
+        # checkstyle into the same log the next iteration reads.
+        - id: fix-style
+          depends_on: [checkstyle]
+          when: "$checkstyle.output.style_ok == 'false'"
+          model: '@devflow-fast'
+          timeout: 1500000
+          loop:
+            command: fix-style
+            max_iterations: 3
+            fresh_context: true
+            on_exhausted: complete
+            until_bash: |
+              sh -c "$INPUTS_CHECKSTYLE_CMD" > "$ARTIFACTS_DIR/checkstyle.log" 2>&1
+
+        - id: pr-text
+          command: pr-text
+          model: '@devflow-fast'
+          mutates_checkout: false
+          depends_on: [control, checkstyle, fix-style]
+          trigger_rule: none_failed_min_one_success
+          when: "$control.output.has_pr == 'false'"
+          output_format:
+            type: object
+            properties:
+              title: { type: string }
+            required: [title]
+            additionalProperties: false
+
+        # Refuses when the local gate is still red after fix-style.
+        - id: publish
+          script: publish
+          runtime: bun
+          depends_on: [control, implement, checkstyle, fix-style, pr-text]
+          trigger_rule: none_failed_min_one_success
+          timeout: 3000000
+          with:
+            repo: "$preflight.output.repo"
+            base: "$preflight.output.base"
+            head: "$preflight.output.head"
+            pr_number: "$control.output.pr_number"
+            checks_ok: "$checkstyle.output.ok"
+            threads: { from: "$implement.output.threads", if_skipped: null }
+          output_format:
+            type: object
+            properties:
+              pr:
+                type: object
+                properties:
+                  number: { type: integer, minimum: 1 }
+                  url: { type: string }
+                  is_draft: { type: boolean }
+                required: [number, url, is_draft]
+                additionalProperties: false
+              pushed: { type: boolean }
+              head_revision: { type: string }
+              answered: { type: integer, minimum: 0 }
+            required: [pr, pushed, head_revision, answered]
+            additionalProperties: false
+
+        - id: request-review
+          script: request-review
+          runtime: bun
+          depends_on: [publish]
+          timeout: 180000
+          with:
+            repo: "$preflight.output.repo"
+            pr_number: "$publish.output.pr.number"
+            head_revision: "$publish.output.head_revision"
+          output_format:
+            type: object
+            properties:
+              requested: { type: boolean }
+              head_revision: { type: string }
+              error: { type: string }
+            required: [requested, head_revision, error]
+            additionalProperties: false
+
+        # Polls in-process; its own deadlines (at most 140 minutes) end before this timeout.
+        - id: await
+          script: await
+          runtime: bun
+          depends_on: [publish, request-review]
+          timeout: 9000000
+          with:
+            repo: "$preflight.output.repo"
+            base: "$preflight.output.base"
+            pr_number: "$publish.output.pr.number"
+            head_revision: "$publish.output.head_revision"
+            request_error: "$request-review.output.error"
+          output_format:
+            type: object
+            properties:
+              head_revision: { type: string }
+              copilot: { type: string, enum: [done, timeout, off, request_failed] }
+              checks: { type: string, enum: [green, red, pending_timeout, none, gated, unknown] }
+              open_threads: { type: integer, minimum: 0 }
+              red_units: { type: integer, minimum: 0 }
+              conflict: { type: boolean }
+              snapshot_path: { type: string }
+            required: [head_revision, copilot, checks, open_threads, red_units, conflict, snapshot_path]
+            additionalProperties: false
+
+        - id: judge-threads
+          command: judge-threads
+          model: '@devflow-cross'
+          mutates_checkout: false
+          depends_on: [await]
+          when: "$await.output.open_threads > 0"
+          output_format:
+            type: object
+            properties:
+              decisions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    thread: { type: string }
+                    decision: { type: string, enum: [accept, decline, not_this_change, needs_human] }
+                    reason: { type: string }
+                    reply: { type: string }
+                  required: [thread, decision, reason, reply]
+                  additionalProperties: false
+              summary: { type: string }
+            required: [decisions, summary]
+            additionalProperties: false
+
+        - id: judge-ci
+          command: judge-ci
+          model: '@devflow-ci'
+          mutates_checkout: false
+          depends_on: [await]
+          when: "$await.output.red_units > 0"
+          output_format:
+            type: object
+            properties:
+              units:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    cause: { type: string, enum: [pr_caused, infra, flaky, unknown] }
+                    evidence: { type: string }
+                    fix: { type: string }
+                  required: [name, cause, evidence, fix]
+                  additionalProperties: false
+              summary: { type: string }
+            required: [units, summary]
+            additionalProperties: false
+
+        # Always runs: await is an unconditional dependency; skipped judges bind null.
+        - id: act
+          script: act
+          runtime: bun
+          depends_on: [control, publish, await, judge-threads, judge-ci]
+          trigger_rule: none_failed_min_one_success
+          timeout: 600000
+          with:
+            base: "$preflight.output.base"
+            round: "$control.output.round"
+            pr_url: "$publish.output.pr.url"
+            snapshot_path: "$await.output.snapshot_path"
+            decisions: { from: "$judge-threads.output.decisions", if_skipped: null }
+            units: { from: "$judge-ci.output.units", if_skipped: null }
+          output_format:
+            type: object
+            properties:
+              done: { type: boolean }
+              has_work: { type: boolean }
+              ask: { type: boolean }
+              reruns: { type: integer, minimum: 0 }
+              summary: { type: string }
+              report_path: { type: string }
+              pr_number: { type: integer, minimum: 1 }
+              pr_url: { type: string }
+            required: [done, has_work, ask, reruns, summary, report_path, pr_number, pr_url]
+            additionalProperties: false
+
+        - id: escalate
+          depends_on: [act]
+          when: "$act.output.ask == 'true'"
+          wait:
+            form: message
+            attention: >-
+              devflow-deliver $INPUTS.key, round $control.output.round, needs a decision:
+              $act.output.summary. Details and how to answer: $act.output.report_path
+              (pull request $act.output.pr_url). Your answer becomes the next round's
+              work order.
+
+  - id: summarize
+    command: summarize
+    model: '@devflow-fast'
+    mutates_checkout: false
+    depends_on: [rounds]
+    output_format:
+      type: object
+      properties:
+        summary: { type: string }
+      required: [summary]
+      additionalProperties: false
+
+  - id: finish
+    script: finish
+    runtime: bun
+    depends_on: [rounds, summarize]
+    timeout: 300000
+    with:
+      repo: "$preflight.output.repo"
+      head: "$preflight.output.head"
+      has_followup: "$preflight.output.has_followup"
+      done: "$rounds.output.done"
+      summary: "$rounds.output.summary"
+      pr_number: "$rounds.output.pr_number"
+    output_format:
+      type: object
+      properties:
+        done: { type: boolean }
+        pr_url: { type: string }
+        reason: { type: string }
+      required: [done, pr_url, reason]
+      additionalProperties: false

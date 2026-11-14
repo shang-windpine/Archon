@@ -1,0 +1,5 @@
+# `cd devflow && bun test` runs only the pack's own tests. Bun reads bunfig.toml from
+# the working directory only, so Archon's root bunfig (root = ./packages, engine
+# preload) does not apply here.
+[test]
+root = "./test"

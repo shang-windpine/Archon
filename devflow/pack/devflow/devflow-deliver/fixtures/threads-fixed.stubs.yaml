@@ -1,0 +1,47 @@
+# The round after threads-judged: control hands implement the accepted thread (an
+# existing PR, so pr-text is skipped), implement reports it fixed, publish answers and
+# resolves it, Copilot reviews the new head with no thread, CI is green: act reports
+# done and the delivery succeeds.
+preflight:
+  repo: { host: github.com, path: acme/shop }
+  base: main
+  head: feature/ABC-1
+  requirement_path: /tmp/artifacts/requirement.md
+  has_followup: false
+  pr_number: 7
+control: { round: 2, implement: true, pr_number: 7, has_pr: true, work_order: /tmp/artifacts/work-order.md }
+implement:
+  summary: "stub: rejected null names"
+  commits: 1
+  threads: [{ thread: PRRT_1, status: fixed, note: "GreetController.greet now rejects a null name; GreetControllerTest.rejectsNull covers it." }]
+checkstyle: { ok: true, style_ok: true, verify_ok: true, log_path: /tmp/artifacts/checkstyle.log, verify_log_path: "" }
+publish:
+  pr: { number: 7, url: "https://github.com/acme/shop/pull/7", is_draft: true }
+  pushed: true
+  head_revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  answered: 1
+request-review: { requested: true, head_revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, error: "" }
+await:
+  head_revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  copilot: done
+  checks: green
+  open_threads: 0
+  red_units: 0
+  conflict: false
+  snapshot_path: /tmp/artifacts/snapshot.json
+act:
+  done: true
+  has_work: false
+  ask: false
+  reruns: 0
+  summary: "done: checks green, Copilot settled, no open thread"
+  report_path: ""
+  pr_number: 7
+  pr_url: "https://github.com/acme/shop/pull/7"
+summarize: { summary: "stub" }
+finish: { done: true, pr_url: "https://github.com/acme/shop/pull/7", reason: done }
+fixture:
+  expect: completed
+  authored: succeeded
+  inputs: { key: ABC-1 }
+  reached: [control, implement, checkstyle, publish, request-review, await, act, summarize, finish]

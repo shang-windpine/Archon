@@ -1,0 +1,44 @@
+# The rounds ran out unfinalized and the person rejects at the final gate: the run
+# cancels and nothing is published (`finalize` has no stub, so reaching it fails the fixture).
+intake:
+  key: DEMO-1
+  state_dir: "/stub/state/devflow/DEMO-1"
+  intake_path: "/stub/artifacts/intake.md"
+  sources: [message]
+  has_previous: false
+  previous_requirement_path: ""
+  warnings: []
+explore: { feasible: unknown, summary: "stub: the material does not say which module." }
+control:
+  finalize: false
+  round: 5
+  human_feedback_path: ""
+  refine_log_path: "/stub/state/devflow/DEMO-1/refine-log.md"
+  requirement_path: "/stub/artifacts/requirement.md"
+  review_path: "/stub/artifacts/review.md"
+draft: { summary: "stub: fifth draft", open_questions: 2 }
+review: { verdict: revise, needs_human: false, questions: [], summary: "stub: still ambiguous." }
+record:
+  ask: false
+  round: 5
+  verdict: revise
+  summary: "stub: still ambiguous."
+  questions_text: "(none)"
+  requirement_path: "/stub/artifacts/requirement.md"
+  review_path: "/stub/artifacts/review.md"
+  refine_log_path: "/stub/state/devflow/DEMO-1/refine-log.md"
+  recommendation: { option: revise, why: "stub: changes requested", confidence: medium }
+status:
+  finalized: false
+  rounds: 5
+  note: ""
+  last_verdict: revise
+  last_summary: "stub: still ambiguous."
+  requirement_path: "/stub/artifacts/requirement.md"
+  review_path: "/stub/artifacts/review.md"
+  refine_log_path: "/stub/state/devflow/DEMO-1/refine-log.md"
+final-gate: { decision: reject, text: "needs the product owner first" }
+fixture:
+  expect: cancelled
+  inputs: { key: DEMO-1 }
+  reached: [final-gate, stop]

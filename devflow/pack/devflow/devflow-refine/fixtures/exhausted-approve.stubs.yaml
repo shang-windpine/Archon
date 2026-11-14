@@ -1,0 +1,49 @@
+# The last round: the reviewer still asks for changes and needs no person, so under
+# refine_human=auto the round gate is skipped (it has no stub: reaching it fails the
+# fixture). The rounds run out unfinalized, the final gate asks, the person approves, and
+# finalize publishes the draft.
+intake:
+  key: DEMO-1
+  state_dir: "/stub/state/devflow/DEMO-1"
+  intake_path: "/stub/artifacts/intake.md"
+  sources: [message]
+  has_previous: false
+  previous_requirement_path: ""
+  warnings: []
+explore: { feasible: partial, summary: "stub: needs a product decision on null names." }
+control:
+  finalize: false
+  round: 5
+  human_feedback_path: ""
+  refine_log_path: "/stub/state/devflow/DEMO-1/refine-log.md"
+  requirement_path: "/stub/artifacts/requirement.md"
+  review_path: "/stub/artifacts/review.md"
+draft: { summary: "stub: fifth draft", open_questions: 1 }
+review: { verdict: revise, needs_human: false, questions: [], summary: "stub: one major finding left." }
+record:
+  ask: false
+  round: 5
+  verdict: revise
+  summary: "stub: one major finding left."
+  questions_text: "(none)"
+  requirement_path: "/stub/artifacts/requirement.md"
+  review_path: "/stub/artifacts/review.md"
+  refine_log_path: "/stub/state/devflow/DEMO-1/refine-log.md"
+  recommendation: { option: revise, why: "stub: changes requested", confidence: medium }
+status:
+  finalized: false
+  rounds: 5
+  note: ""
+  last_verdict: revise
+  last_summary: "stub: one major finding left."
+  requirement_path: "/stub/artifacts/requirement.md"
+  review_path: "/stub/artifacts/review.md"
+  refine_log_path: "/stub/state/devflow/DEMO-1/refine-log.md"
+final-gate: { decision: approve, text: "good enough for now" }
+finalize: { requirement_path: "/stub/state/devflow/DEMO-1/requirement.md", history_path: "", jira_comment: skipped }
+fixture:
+  expect: completed
+  inputs: { key: DEMO-1 }
+  reached: [record, status, final-gate, finalize]
+  resolved-text-contains:
+    final-gate: "not finalized after 5 rounds"

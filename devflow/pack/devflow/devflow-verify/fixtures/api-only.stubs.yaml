@@ -1,0 +1,45 @@
+# Only the External API side is planned. plan-ui has no stub: were it reached, the
+# fixture would fail on the missing stub. assemble receives the skipped UI plan as null.
+context:
+  key: DEMO-1
+  requirement_path: /state/devflow/DEMO-1/requirement.md
+  change_summary_path: ""
+  context_path: /artifacts/context.md
+  code_path: /repo
+  pr_url: ""
+  worktree_path: ""
+  plan_path: /state/devflow/DEMO-1/verify-plan.md
+  results_path: /state/devflow/DEMO-1/verify-results.md
+  report_path: /state/devflow/DEMO-1/verify-report.md
+  followup_path: /state/devflow/DEMO-1/followup-work.md
+  files_source: git
+  changed_files: 1
+  warnings: 2
+classify: { ui: false, api: true, reason: "stub: only a controller changed" }
+plan-api:
+  cases:
+    - { id: API-1, title: "stub: GET returns the farewell", criterion: AC-1 }
+  summary: "stub: one API case"
+plan-review: { ok: false, gaps: 1, summary: "stub: AC-2 has no permission case" }
+assemble:
+  plan_path: /state/devflow/DEMO-1/verify-plan.md
+  results_path: /state/devflow/DEMO-1/verify-results.md
+  cases: 1
+  ui_cases: 0
+  api_cases: 1
+  headline: "1 manual test case(s) planned (UI 0, External API 1). The plan review found 1 gap(s); read its section in the plan."
+run-tests: { text: "API-1 PASS" }
+triage:
+  all_passed: true
+  failed: 0
+  blocked: 0
+  not_run: 0
+  followup_written: false
+  summary: "stub: the one case passed"
+fixture:
+  inputs: { key: DEMO-1 }
+  expect: completed
+  authored: succeeded
+  reached: [classify, plan-api, plan-review, assemble, run-tests, triage]
+  resolved-text-contains:
+    run-tests: "found 1 gap(s)"

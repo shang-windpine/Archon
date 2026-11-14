@@ -1,0 +1,43 @@
+# ~/.archon/config.yaml (or $ARCHON_HOME/config.yaml) — this machine's Archon settings
+# for the devflow pack. Merge these keys into an existing file rather than replacing
+# it. Keys are strict: `archon doctor` reports a file Archon refuses to load.
+# Reference: https://archon.diy/reference/configuration/ and
+# https://archon.diy/getting-started/ai-assistants/
+
+# Provider for anything that names no alias. The home config's key is
+# `defaultAssistant` (a repository's .archon/config.yaml uses `assistant`).
+defaultAssistant: claude
+
+assistants:
+  pi:
+    # Pi loads user extensions by default; an extension can add tools or block for
+    # review in an unattended node. devflow's Pi nodes are unattended, so keep them off
+    # unless you rely on an extension. Ignored when the Pi provider is not installed.
+    enableExtensions: false
+
+# The four devflow roles. devflow workflows name only these aliases, never a provider,
+# so this block decides which provider and model each role runs on. A run refuses to
+# start when an alias is missing. The same settings can be written with
+# `archon ai alias set <@alias> <provider> <model> [--effort <level>]`.
+#
+# provider: claude — Claude Code through your Claude subscription login (`claude`
+#   /login) or CLAUDE_CODE_OAUTH_TOKEN. Models: opus, sonnet, haiku or a full model id.
+# provider: pi — model is `<pi-provider>/<model-id>`: the Pi provider id first, then
+#   that provider's model id, which may itself contain slashes (openrouter/qwen/qwen3-coder).
+#   A custom gateway is a provider you add to ~/.pi/agent/models.json (see
+#   devflow/templates/pi-models.example.json); its id is the key under "providers".
+#   Check a ref with `pi --list-models` or `pi update --models`; Archon never
+#   substitutes another model when the ref is wrong.
+# effort (optional): minimal | low | medium | high | xhigh | max.
+aliases:
+  # Exploring the repo, drafting the requirement, implementing and fixing, test plans.
+  '@devflow-main': { provider: claude, model: opus }
+  # PR text, change summaries, checkstyle fixes.
+  '@devflow-fast': { provider: claude, model: sonnet }
+  # CI failure log triage.
+  '@devflow-ci': { provider: claude, model: sonnet }
+  # The second opinion: requirement review, Copilot thread judgement, test-plan review.
+  # A different vendor than @devflow-main catches more; with Pi, for example:
+  #   '@devflow-cross': { provider: pi, model: openrouter/<vendor>/<model-id> }
+  #   '@devflow-cross': { provider: pi, model: my-gateway/deepseek-v4 }
+  '@devflow-cross': { provider: claude, model: sonnet }

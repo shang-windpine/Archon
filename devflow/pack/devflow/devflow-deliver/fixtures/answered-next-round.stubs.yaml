@@ -1,0 +1,47 @@
+# The round after ask-escalate: the operator's answer makes control implement (it
+# carries the answer in the work order); the thread judge, reading the answer, declines
+# the thread with the operator's reason; act resolves it and the round is done.
+preflight:
+  repo: { host: github.com, path: acme/shop }
+  base: main
+  head: feature/ABC-1
+  requirement_path: /tmp/artifacts/requirement.md
+  has_followup: false
+  pr_number: 7
+control: { round: 2, implement: true, pr_number: 7, has_pr: true, work_order: /tmp/artifacts/work-order.md }
+implement: { summary: "stub: no code change; the answer decides a thread", commits: 0, threads: [] }
+checkstyle: { ok: true, style_ok: true, verify_ok: true, log_path: /tmp/artifacts/checkstyle.log, verify_log_path: "" }
+publish:
+  pr: { number: 7, url: "https://github.com/acme/shop/pull/7", is_draft: true }
+  pushed: false
+  head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  answered: 0
+request-review: { requested: false, head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, error: "" }
+await:
+  head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  copilot: done
+  checks: green
+  open_threads: 1
+  red_units: 0
+  conflict: false
+  snapshot_path: /tmp/artifacts/snapshot.json
+judge-threads:
+  decisions:
+    - { thread: PRRT_9, decision: decline, reason: "operator decided", reply: "The requirement fixes 400 for unknown users (requirement AC-4), so this keeps 400." }
+  summary: "stub: 1 decline per the operator's answer"
+act:
+  done: true
+  has_work: false
+  ask: false
+  reruns: 0
+  summary: "done: checks green, Copilot settled, no open thread"
+  report_path: ""
+  pr_number: 7
+  pr_url: "https://github.com/acme/shop/pull/7"
+summarize: { summary: "stub" }
+finish: { done: true, pr_url: "https://github.com/acme/shop/pull/7", reason: done }
+fixture:
+  expect: completed
+  authored: succeeded
+  inputs: { key: ABC-1 }
+  reached: [control, implement, judge-threads, act, finish]

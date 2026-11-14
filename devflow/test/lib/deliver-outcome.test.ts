@@ -1,0 +1,243 @@
+import { describe, expect, test } from 'bun:test';
+import { summarizeChecks } from '../../pack/devflow/.shared/lib/checks.ts';
+import {
+  type CiJudgement,
+  computeRoundOutcome,
+  planReruns,
+  recordReruns,
+  type RoundFacts,
+  type ThreadDecision,
+  unitKey,
+} from '../../pack/devflow/.shared/lib/deliver-outcome.ts';
+import { HEAD, OLD, snapshot, unit } from './check-fixtures.ts';
+
+const greenSummary = summarizeChecks(snapshot([unit('build', 'green')]), HEAD, []);
+
+/** A finished round: everything green, Copilot reviewed, nothing open. */
+function facts(overrides: Partial<RoundFacts> = {}): RoundFacts {
+  return {
+    head: HEAD,
+    checks: 'green',
+    summary: greenSummary,
+    copilot: 'done',
+    openThreads: 0,
+    decisions: [],
+    ciJudgement: [],
+    conflict: false,
+    rerunsIssued: 0,
+    rerunHistory: [],
+    ...overrides,
+  };
+}
+
+const decision = (thread: string, kind: ThreadDecision['decision']): ThreadDecision => ({
+  thread,
+  decision: kind,
+  reason: 'r',
+  reply: kind === 'decline' || kind === 'not_this_change' ? 'reply' : '',
+});
+const judged = (name: string, cause: CiJudgement['cause']): CiJudgement => ({
+  name,
+  cause,
+  evidence: 'e',
+  fix: '',
+});
+
+function redSummary(...names: string[]) {
+  return summarizeChecks(snapshot(names.map(name => unit(name, 'red'))), HEAD, []);
+}
+
+describe('computeRoundOutcome', () => {
+  test('all clear is done, with no work and no ask', () => {
+    expect(computeRoundOutcome(facts())).toEqual({
+      done: true,
+      has_work: false,
+      ask: false,
+      reasons: [],
+    });
+  });
+
+  test('copilot off counts as reviewed', () => {
+    expect(computeRoundOutcome(facts({ copilot: 'off' })).done).toBe(true);
+  });
+
+  // Each row breaks exactly one condition of `done` and names the expected flags.
+  const rows: [string, Partial<RoundFacts>, { has_work: boolean; ask: boolean }][] = [
+    [
+      'accepted thread',
+      { openThreads: 1, decisions: [decision('t1', 'accept')] },
+      { has_work: true, ask: false },
+    ],
+    [
+      'needs_human thread',
+      { openThreads: 1, decisions: [decision('t1', 'needs_human')] },
+      { has_work: false, ask: true },
+    ],
+    [
+      'pr_caused CI failure',
+      { checks: 'red', summary: redSummary('test'), ciJudgement: [judged('test', 'pr_caused')] },
+      { has_work: true, ask: false },
+    ],
+    [
+      'unknown CI failure',
+      { checks: 'red', summary: redSummary('test'), ciJudgement: [judged('test', 'unknown')] },
+      { has_work: false, ask: true },
+    ],
+    ['merge conflict', { conflict: true }, { has_work: true, ask: false }],
+    ['copilot timeout', { copilot: 'timeout' }, { has_work: false, ask: true }],
+    ['copilot request failed', { copilot: 'request_failed' }, { has_work: false, ask: true }],
+    ['checks pending_timeout', { checks: 'pending_timeout' }, { has_work: false, ask: true }],
+    ['checks gated', { checks: 'gated' }, { has_work: false, ask: true }],
+    ['checks unknown', { checks: 'unknown' }, { has_work: false, ask: true }],
+    ['checks none', { checks: 'none' }, { has_work: false, ask: true }],
+    ['no checks snapshot', { summary: null }, { has_work: false, ask: true }],
+    [
+      'stale snapshot reported green (no progress)',
+      { summary: summarizeChecks(snapshot([unit('build', 'green')], OLD), HEAD, []) },
+      { has_work: false, ask: true },
+    ],
+    [
+      'required check missing (no progress)',
+      { summary: summarizeChecks(snapshot([unit('build', 'green')]), HEAD, ['sonar']) },
+      { has_work: false, ask: true },
+    ],
+    [
+      'unresolved thread nobody decided (no progress)',
+      { openThreads: 2 },
+      { has_work: false, ask: true },
+    ],
+  ];
+  test.each(rows)('%s is not done', (_name, override, expected) => {
+    const outcome = computeRoundOutcome(facts(override));
+    expect(outcome.done).toBe(false);
+    expect({ has_work: outcome.has_work, ask: outcome.ask }).toEqual(expected);
+    expect(outcome.reasons.length).toBeGreaterThan(0);
+  });
+
+  test('declined threads that were resolved do not block done', () => {
+    const outcome = computeRoundOutcome(
+      facts({
+        openThreads: 0,
+        decisions: [decision('t1', 'decline'), decision('t2', 'not_this_change')],
+      })
+    );
+    expect(outcome).toMatchObject({ done: true, ask: false, has_work: false });
+  });
+
+  test('an infra failure rerun this round waits: not done, no ask, no work', () => {
+    const outcome = computeRoundOutcome(
+      facts({
+        checks: 'red',
+        summary: redSummary('it'),
+        ciJudgement: [judged('it', 'infra')],
+        rerunsIssued: 1,
+      })
+    );
+    expect(outcome).toMatchObject({ done: false, ask: false, has_work: false });
+  });
+
+  test('reruns issued block done even when checks read green', () => {
+    expect(computeRoundOutcome(facts({ rerunsIssued: 1 }))).toMatchObject({
+      done: false,
+      ask: false,
+    });
+  });
+
+  test('a planned rerun that was not issued asks', () => {
+    const outcome = computeRoundOutcome(
+      facts({
+        checks: 'red',
+        summary: redSummary('it'),
+        ciJudgement: [judged('it', 'flaky')],
+        rerunsIssued: 0,
+      })
+    );
+    expect(outcome).toMatchObject({ done: false, ask: true });
+  });
+
+  test('still red after its one rerun on this head asks', () => {
+    const history = recordReruns([], HEAD, [unit('it', 'red')], '2026-11-14T10:00:00Z');
+    const outcome = computeRoundOutcome(
+      facts({
+        checks: 'red',
+        summary: redSummary('it'),
+        ciJudgement: [judged('it', 'infra')],
+        rerunHistory: history,
+      })
+    );
+    expect(outcome).toMatchObject({ done: false, ask: true });
+    expect(outcome.reasons.some(reason => reason.includes('still red after one rerun'))).toBe(true);
+  });
+
+  test('a red unit nobody judged asks', () => {
+    const outcome = computeRoundOutcome(
+      facts({
+        checks: 'red',
+        summary: redSummary('a', 'b'),
+        ciJudgement: [judged('a', 'pr_caused')],
+      })
+    );
+    expect(outcome).toMatchObject({ done: false, has_work: true, ask: true });
+  });
+
+  test('work and ask can both hold', () => {
+    const outcome = computeRoundOutcome(
+      facts({
+        openThreads: 2,
+        decisions: [decision('t1', 'accept'), decision('t2', 'needs_human')],
+        copilot: 'timeout',
+      })
+    );
+    expect(outcome).toMatchObject({ done: false, has_work: true, ask: true });
+  });
+});
+
+describe('rerun bookkeeping', () => {
+  test('unitKey is kind and exact name', () => {
+    expect(unitKey({ kind: 'check', id: '1', name: 'Build / jdk17' })).toBe('check:Build / jdk17');
+  });
+
+  test('planReruns sorts red units by judgement, rerunnability and history', () => {
+    const units = [
+      unit('fresh', 'red'),
+      unit('again', 'red'),
+      unit('status', 'red', null),
+      unit('mine', 'red'),
+      unit('mystery', 'red'),
+      unit('nobody', 'red'),
+    ];
+    const judgements = [
+      judged('fresh', 'flaky'),
+      judged('again', 'infra'),
+      judged('status', 'infra'),
+      judged('mine', 'pr_caused'),
+      judged('mystery', 'unknown'),
+    ];
+    const history = [
+      { head: HEAD, unit: 'check:again', at: 't' },
+      { head: OLD, unit: 'check:fresh', at: 't' },
+    ];
+    const plan = planReruns(units, judgements, history, HEAD);
+    expect(plan.rerun.map(u => u.unit.name)).toEqual(['fresh']);
+    expect(plan.repeated.map(u => u.unit.name)).toEqual(['again']);
+    expect(plan.notRerunnable.map(u => u.unit.name)).toEqual(['status']);
+    expect(plan.unjudged.map(u => u.unit.name)).toEqual(['nobody']);
+  });
+
+  test('a rerun on an older head does not count against the new head', () => {
+    const history = recordReruns([], OLD, [unit('it', 'red')], 't');
+    const plan = planReruns([unit('it', 'red')], [judged('it', 'infra')], history, HEAD);
+    expect(plan.rerun.map(u => u.unit.name)).toEqual(['it']);
+  });
+
+  test('recordReruns appends one record per issued unit', () => {
+    const before = [{ head: OLD, unit: 'check:x', at: 't0' }];
+    const after = recordReruns(before, HEAD, [unit('a', 'red'), unit('b', 'red')], 't1');
+    expect(after).toEqual([
+      { head: OLD, unit: 'check:x', at: 't0' },
+      { head: HEAD, unit: 'check:a', at: 't1' },
+      { head: HEAD, unit: 'check:b', at: 't1' },
+    ]);
+    expect(before).toHaveLength(1);
+  });
+});

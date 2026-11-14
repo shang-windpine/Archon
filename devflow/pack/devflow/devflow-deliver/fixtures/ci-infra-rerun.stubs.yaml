@@ -1,0 +1,50 @@
+# CI is red on one unit; judge-ci finds a dependency download outage (infra). act
+# reruns it once and the round is neither done nor asking: the next round waits for the
+# rerun (ci-rerun-green.stubs.yaml). No thread is open, so judge-threads is skipped.
+preflight:
+  repo: { host: github.com, path: acme/shop }
+  base: main
+  head: feature/ABC-1
+  requirement_path: /tmp/artifacts/requirement.md
+  has_followup: false
+  pr_number: 7
+control: { round: 1, implement: true, pr_number: 7, has_pr: true, work_order: /tmp/artifacts/work-order.md }
+implement: { summary: "stub: implemented", commits: 1, threads: [] }
+checkstyle: { ok: true, style_ok: true, verify_ok: true, log_path: /tmp/artifacts/checkstyle.log, verify_log_path: "" }
+publish:
+  pr: { number: 7, url: "https://github.com/acme/shop/pull/7", is_draft: true }
+  pushed: true
+  head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  answered: 0
+request-review: { requested: true, head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, error: "" }
+await:
+  head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  copilot: done
+  checks: red
+  open_threads: 0
+  red_units: 1
+  conflict: false
+  snapshot_path: /tmp/artifacts/snapshot.json
+judge-ci:
+  units:
+    - name: build
+      cause: infra
+      evidence: "ci-logs/build.log: Could not transfer artifact org.slf4j:slf4j-api:pom:2.0.13 from/to central: 503 Service Unavailable (pom.xml untouched by this change)"
+      fix: ""
+  summary: "stub: 1 infra"
+act:
+  done: false
+  has_work: false
+  ask: false
+  reruns: 1
+  summary: "1 rerun(s) issued; waiting for their result; checks are red"
+  report_path: ""
+  pr_number: 7
+  pr_url: "https://github.com/acme/shop/pull/7"
+summarize: { summary: "stub" }
+finish: { done: false, pr_url: "https://github.com/acme/shop/pull/7", reason: "the round cap was reached" }
+fixture:
+  expect: completed
+  authored: failed
+  inputs: { key: ABC-1 }
+  reached: [await, judge-ci, act, finish]

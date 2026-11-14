@@ -1,0 +1,46 @@
+# Round 1 on a new branch: implement, checkstyle passes (fix-style skipped), pr-text
+# writes the text, publish opens the draft PR, Copilot reviews the head with no thread,
+# CI is green. No judge runs, act reports done, escalate is skipped, finish succeeds.
+# A reached node without a stub fails the fixture, so the missing fix-style, judge and
+# escalate stubs assert those nodes are skipped.
+preflight:
+  repo: { host: github.com, path: acme/shop }
+  base: main
+  head: feature/ABC-1
+  requirement_path: /tmp/artifacts/requirement.md
+  has_followup: false
+  pr_number: 0
+control: { round: 1, implement: true, pr_number: 0, has_pr: false, work_order: /tmp/artifacts/work-order.md }
+implement: { summary: "stub: implemented the requirement", commits: 2, threads: [] }
+checkstyle: { ok: true, style_ok: true, verify_ok: true, log_path: /tmp/artifacts/checkstyle.log, verify_log_path: "" }
+pr-text: { title: "ABC-1: Add greeting endpoint" }
+publish:
+  pr: { number: 7, url: "https://github.com/acme/shop/pull/7", is_draft: true }
+  pushed: true
+  head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  answered: 0
+request-review: { requested: true, head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, error: "" }
+await:
+  head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  copilot: done
+  checks: green
+  open_threads: 0
+  red_units: 0
+  conflict: false
+  snapshot_path: /tmp/artifacts/snapshot.json
+act:
+  done: true
+  has_work: false
+  ask: false
+  reruns: 0
+  summary: "done: checks green, Copilot settled, no open thread"
+  report_path: ""
+  pr_number: 7
+  pr_url: "https://github.com/acme/shop/pull/7"
+summarize: { summary: "stub: one module changed" }
+finish: { done: true, pr_url: "https://github.com/acme/shop/pull/7", reason: done }
+fixture:
+  expect: completed
+  authored: succeeded
+  inputs: { key: ABC-1 }
+  reached: [preflight, control, implement, checkstyle, pr-text, publish, request-review, await, act, summarize, finish]

@@ -1,0 +1,262 @@
+name: devflow-refine
+description: |
+  Turn a raw request into the final requirement document devflow-deliver builds from.
+  Collects the Jira issue, pasted notes and the run message, explores feasibility in the
+  repository, then runs capped rounds of draft and an independent review; a person is
+  asked to finalize or send the draft back with feedback. The approved requirement lands
+  in $STATE_DIR/devflow/<KEY>/requirement.md, optionally posted back to Jira. Read-only on
+  the repository: it runs in the current checkout and writes only Archon's state and
+  artifacts.
+
+  Use when: a requirement (a Jira key or a slug) needs refining before delivery —
+  "refine ABC-123", "write the requirement for this ticket".
+  NOT for: implementing, opening pull requests, or testing (devflow-deliver, devflow-verify).
+
+worktree:
+  enabled: false
+mutates_checkout: false
+
+inputs:
+  key:
+    required: true
+    description: >-
+      The requirement's key: a Jira key such as ABC-123, or a slug matching
+      ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$. Names $STATE_DIR/devflow/<key>/.
+  brief_file:
+    default: ""
+    description: >-
+      Absolute path to a file of extra material (pasted Slack thread, meeting notes).
+      Empty for none. Files in $STATE_DIR/devflow/<key>/inbox/*.md are always read.
+
+nodes:
+  # Refuses before any agent spends when the key is invalid or there is no material.
+  - id: intake
+    script: intake
+    runtime: bun
+    timeout: 180000
+    output_format:
+      type: object
+      properties:
+        key: { type: string }
+        state_dir: { type: string }
+        intake_path: { type: string }
+        sources: { type: array, items: { type: string } }
+        has_previous: { type: boolean }
+        previous_requirement_path: { type: string }
+        warnings: { type: array, items: { type: string } }
+      required: [key, state_dir, intake_path, sources, has_previous, previous_requirement_path, warnings]
+      additionalProperties: false
+
+  - id: explore
+    depends_on: [intake]
+    command: explore
+    model: "@devflow-main"
+    mutates_checkout: false
+    with:
+      intake: $intake.output.intake_path
+      previous: $intake.output.previous_requirement_path
+    output_format:
+      type: object
+      properties:
+        feasible: { type: string, enum: [yes, partial, no, unknown] }
+        summary: { type: string }
+      required: [feasible, summary]
+      additionalProperties: false
+
+  # One round: control → draft → review → record → gate. The gate is the body's only
+  # wait and its sole terminal sink. A person's `finalize` is read by the NEXT round's
+  # control, which skips the rest of that round and ends the loop; until_bash reads only
+  # control, never the gate, which `when:` may skip.
+  - id: refine
+    depends_on: [explore]
+    timeout: 60000
+    loop_group:
+      max_iterations: 5
+      on_exhausted: complete
+      fresh_context: true
+      until_bash: |
+        f=$control.output.finalize
+        [ "$f" = "true" ]
+      nodes:
+        - id: control
+          script: control
+          runtime: bun
+          timeout: 60000
+          with:
+            decision: "$LOOP_PREV.gate.output.decision"
+            answer: "$LOOP_PREV.gate.output.text"
+          output_format:
+            type: object
+            properties:
+              finalize: { type: boolean }
+              round: { type: integer }
+              human_feedback_path: { type: string }
+              refine_log_path: { type: string }
+              requirement_path: { type: string }
+              review_path: { type: string }
+            required: [finalize, round, human_feedback_path, refine_log_path, requirement_path, review_path]
+            additionalProperties: false
+
+        - id: draft
+          depends_on: [control]
+          when: "$control.output.finalize == 'false'"
+          command: draft
+          model: "@devflow-main"
+          mutates_checkout: false
+          with:
+            round: $control.output.round
+            feedback: $control.output.human_feedback_path
+            refine_log: $control.output.refine_log_path
+            intake: $intake.output.intake_path
+            previous: $intake.output.previous_requirement_path
+          output_format:
+            type: object
+            properties:
+              summary: { type: string }
+              open_questions: { type: integer }
+            required: [summary, open_questions]
+            additionalProperties: false
+
+        - id: review
+          depends_on: [draft]
+          command: review
+          model: "@devflow-cross"
+          mutates_checkout: false
+          with:
+            round: $control.output.round
+            refine_log: $control.output.refine_log_path
+            intake: $intake.output.intake_path
+          output_format:
+            type: object
+            properties:
+              verdict: { type: string, enum: [approve, revise] }
+              needs_human: { type: boolean }
+              questions: { type: array, items: { type: string } }
+              summary: { type: string }
+            required: [verdict, needs_human, questions, summary]
+            additionalProperties: false
+
+        # Logs the review, and computes whether the gate asks from refine_human and the
+        # review's verdict and needs_human.
+        - id: record
+          depends_on: [review]
+          script: record
+          runtime: bun
+          timeout: 60000
+          with:
+            round: $control.output.round
+            verdict: $review.output.verdict
+            needs_human: $review.output.needs_human
+            questions: $review.output.questions
+            summary: $review.output.summary
+          output_format:
+            type: object
+            properties:
+              ask: { type: boolean }
+              round: { type: integer }
+              verdict: { type: string, enum: [approve, revise] }
+              summary: { type: string }
+              questions_text: { type: string }
+              requirement_path: { type: string }
+              review_path: { type: string }
+              refine_log_path: { type: string }
+              recommendation:
+                type: object
+                properties:
+                  option: { type: string, enum: [finalize, revise] }
+                  why: { type: string }
+                  confidence: { type: string, enum: [low, medium, high] }
+                required: [option, why, confidence]
+                additionalProperties: false
+            required: [ask, round, verdict, summary, questions_text, requirement_path, review_path, refine_log_path, recommendation]
+            additionalProperties: false
+
+        - id: gate
+          depends_on: [record]
+          when: "$record.output.ask == 'true'"
+          wait:
+            form: select
+            attention: |
+              Requirement $INPUTS.key, round $record.output.round: the reviewer's verdict is $record.output.verdict.
+
+              Draft: $record.output.requirement_path
+              Review: $record.output.review_path
+              Discussion log: $record.output.refine_log_path
+
+              Reviewer summary: $record.output.summary
+
+              Questions for you:
+              $record.output.questions_text
+
+              Choose finalize to make this draft the final requirement; any text is recorded verbatim in its decision log.
+              Choose revise to send it back for another round; write your feedback and answers in the text.
+            options:
+              - id: finalize
+                label: Finalize
+                does: Publishes this draft as the requirement and ends refinement.
+              - id: revise
+                label: Revise
+                does: Runs another draft and review round with your text as feedback.
+            recommendation: "$record.output.recommendation"
+            labels:
+              key: "$INPUTS.key"
+
+  - id: status
+    depends_on: [refine]
+    script: status
+    runtime: bun
+    timeout: 60000
+    output_format:
+      type: object
+      properties:
+        finalized: { type: boolean }
+        rounds: { type: integer }
+        note: { type: string }
+        last_verdict: { type: string }
+        last_summary: { type: string }
+        requirement_path: { type: string }
+        review_path: { type: string }
+        refine_log_path: { type: string }
+      required: [finalized, rounds, note, last_verdict, last_summary, requirement_path, review_path, refine_log_path]
+      additionalProperties: false
+
+  # The rounds ran out without a person choosing finalize.
+  - id: final-gate
+    depends_on: [status]
+    when: "$status.output.finalized == 'false'"
+    wait:
+      form: approval
+      attention: |
+        Requirement $INPUTS.key was not finalized after $status.output.rounds rounds. The last review's verdict is $status.output.last_verdict: $status.output.last_summary
+
+        Draft: $status.output.requirement_path
+        Review: $status.output.review_path
+        Discussion log: $status.output.refine_log_path
+
+        Approve to publish this draft as the requirement anyway; any text is recorded verbatim in its decision log.
+        Reject to cancel this run; rerun devflow-refine with the same key to continue from the discussion log.
+      labels:
+        key: "$INPUTS.key"
+
+  - id: stop
+    depends_on: [final-gate]
+    when: "$final-gate.output.decision == 'reject'"
+    cancel: The requirement was not approved at the final gate.
+
+  - id: finalize
+    depends_on: [status, final-gate, stop]
+    trigger_rule: none_failed_min_one_success
+    script: finalize
+    runtime: bun
+    timeout: 180000
+    with:
+      gate_note: $status.output.note
+      approval_note: { from: $final-gate.output.text, if_skipped: "" }
+    output_format:
+      type: object
+      properties:
+        requirement_path: { type: string }
+        history_path: { type: string }
+        jira_comment: { type: string, enum: [posted, failed, skipped] }
+      required: [requirement_path, history_path, jira_comment]
+      additionalProperties: false

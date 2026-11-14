@@ -1,0 +1,50 @@
+# The person reports failures: triage is handed the follow-up path from context, writes
+# followup-work.md there, and the run's authored outcome is failed while the run completes.
+context:
+  key: DEMO-1
+  requirement_path: /state/devflow/DEMO-1/requirement.md
+  change_summary_path: /state/devflow/DEMO-1/change-summary.md
+  context_path: /artifacts/context.md
+  code_path: /repo
+  pr_url: https://github.com/example/repo/pull/7
+  worktree_path: ""
+  plan_path: /state/devflow/DEMO-1/verify-plan.md
+  results_path: /state/devflow/DEMO-1/verify-results.md
+  report_path: /state/devflow/DEMO-1/verify-report.md
+  followup_path: /state/devflow/DEMO-1/followup-work.md
+  files_source: forge
+  changed_files: 2
+  warnings: 0
+classify: { ui: true, api: true, reason: "stub: a page and a controller changed" }
+plan-ui:
+  cases:
+    - { id: UI-1, title: "stub: farewell shows on the page", criterion: AC-1 }
+  summary: "stub: one UI case"
+plan-api:
+  cases:
+    - { id: API-1, title: "stub: GET returns the farewell", criterion: AC-2 }
+    - { id: API-2, title: "stub: blank name is rejected", criterion: AC-3 }
+  summary: "stub: two API cases"
+plan-review: { ok: true, gaps: 0, summary: "stub: covered" }
+assemble:
+  plan_path: /state/devflow/DEMO-1/verify-plan.md
+  results_path: /state/devflow/DEMO-1/verify-results.md
+  cases: 3
+  ui_cases: 1
+  api_cases: 2
+  headline: "3 manual test case(s) planned (UI 1, External API 2). The plan review found no gaps."
+run-tests: { text: "UI-1 passed. API-1 FAIL: returns 500. API-2 blocked: no test user." }
+triage:
+  all_passed: false
+  failed: 1
+  blocked: 1
+  not_run: 0
+  followup_written: true
+  summary: "stub: one failure written to followup-work.md, one blocked case"
+fixture:
+  inputs: { key: DEMO-1 }
+  expect: completed
+  authored: failed
+  reached: [triage]
+  resolved-text-contains:
+    triage: "/state/devflow/DEMO-1/followup-work.md"

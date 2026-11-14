@@ -1,0 +1,45 @@
+# Round 1: the reviewer approves, the gate asks, and the person chooses finalize. In a
+# real run the next round's control reads that answer and ends the loop; a dry run assumes
+# completion after one round, so `status` is stubbed as that next round leaves it. intake
+# executes for real (exec-code) on the fixture's `jira_view_cmd`; the final gate has no
+# stub, so the fixture fails if it is reached.
+exec-code: true
+explore: { feasible: "yes", summary: "stub: Greeter gains one static method." }
+control:
+  finalize: false
+  round: 1
+  human_feedback_path: ""
+  refine_log_path: "/stub/state/devflow/DEMO-1/refine-log.md"
+  requirement_path: "/stub/artifacts/requirement.md"
+  review_path: "/stub/artifacts/review.md"
+draft: { summary: "stub: add farewell(name) to Greeter", open_questions: 0 }
+review: { verdict: approve, needs_human: false, questions: [], summary: "stub: approve, no findings." }
+record:
+  ask: true
+  round: 1
+  verdict: approve
+  summary: "stub: approve, no findings."
+  questions_text: "(none)"
+  requirement_path: "/stub/artifacts/requirement.md"
+  review_path: "/stub/artifacts/review.md"
+  refine_log_path: "/stub/state/devflow/DEMO-1/refine-log.md"
+  recommendation: { option: finalize, why: "stub: approved", confidence: medium }
+gate: { decision: finalize, text: "" }
+status:
+  finalized: true
+  rounds: 2
+  note: ""
+  last_verdict: approve
+  last_summary: "stub: approve, no findings."
+  requirement_path: "/stub/artifacts/requirement.md"
+  review_path: "/stub/artifacts/review.md"
+  refine_log_path: "/stub/state/devflow/DEMO-1/refine-log.md"
+finalize: { requirement_path: "/stub/state/devflow/DEMO-1/requirement.md", history_path: "", jira_comment: skipped }
+fixture:
+  expect: completed
+  inputs:
+    key: DEMO-1
+    jira_view_cmd: "printf 'DEMO-1: add a farewell(name) method to Greeter for %s\\n' {key}"
+  reached: [intake, explore, control, draft, review, record, gate, status, finalize]
+  resolved-text-contains:
+    gate: "/stub/artifacts/requirement.md"

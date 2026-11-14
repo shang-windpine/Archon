@@ -1,0 +1,173 @@
+name: devflow-smoke
+description: |
+  Read-only connectivity self-check for a machine that runs the devflow pack. It
+  reports the local tools (git, gh with Copilot reviewer support, bun, Maven,
+  java, jira-cli), the forge plugin's access to the checkout's GitHub repository,
+  the base branch on the remote, one optional Jira fetch, and one tiny AI call per
+  devflow model alias (@devflow-main, @devflow-fast, @devflow-ci, @devflow-cross),
+  which proves provider login and alias mapping. It changes nothing: no commit,
+  push, forge write, Jira write or state file.
+
+  Use when: setting up devflow on a machine or repository, after changing
+  ~/.archon/config.yaml aliases or provider logins, or when a devflow run refused
+  at a tool, forge or model step.
+  Input: optional key=<JIRA-KEY> to test jira_view_cmd on one issue.
+  Result: a PASS/WARN/FAIL table (stderr and smoke-report.txt in the run's
+  artifacts) and {ok, failures, warnings, report_path}; warnings never fail it.
+  NOT for: proving write access to GitHub or Jira (the first real write does that).
+
+# Reads the live checkout and changes nothing in it, so it runs there, beside any
+# run that holds the checkout.
+worktree:
+  enabled: false
+mutates_checkout: false
+
+inputs:
+  key:
+    default: ""
+    description: Jira key to fetch once with jira_view_cmd; empty skips the Jira probe.
+
+returns: summary
+outcome_field: ok
+
+nodes:
+  - id: tools
+    script: tools
+    runtime: bun
+    timeout: 240000
+    output_type: smoke-probe
+    output_format: &probe_report
+      type: object
+      properties:
+        probe: { type: string }
+        checks:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              status: { type: string, enum: [pass, warn, fail, skip] }
+              detail: { type: string }
+              hint: { type: string }
+            required: [name, status, detail, hint]
+            additionalProperties: false
+      required: [probe, checks]
+      additionalProperties: false
+
+  # The pack's shared forge check: plugin, every devflow operation, credential, and
+  # one authenticated read. It refuses (fails this node) on a non-GitHub remote; the
+  # summary reads that failure from the node outcomes.
+  - id: forge-check
+    script: forge-check
+    runtime: bun
+    timeout: 120000
+    output_type: forge-access
+    output_format:
+      type: object
+      properties:
+        repo:
+          type: object
+          properties:
+            host: { type: string }
+            path: { type: string }
+          required: [host, path]
+        host: { type: string }
+        plugin:
+          type: object
+          properties:
+            name: { type: string }
+            version: { type: string }
+          required: [name, version]
+        operations: { type: array, items: { type: string } }
+        credentialSource: { type: [string, "null"] }
+        readVerified: { type: boolean }
+      required: [repo, host, plugin, operations, credentialSource, readVerified]
+
+  - id: resolve
+    script: resolve
+    runtime: bun
+    timeout: 120000
+    output_type: smoke-probe
+    output_format: *probe_report
+
+  - id: jira
+    script: jira
+    runtime: bun
+    timeout: 120000
+    output_type: smoke-probe
+    output_format: *probe_report
+
+  # One trivial structured call per alias. No tools, low effort: the call proves the
+  # alias resolves, the provider authenticates, and the model returns schema-valid JSON.
+  - id: ai-main
+    model: "@devflow-main"
+    effort: low
+    allowed_tools: []
+    idle_timeout: 180000
+    prompt: &ai_prompt |
+      This is an automated connectivity check. Do not read files, run commands or
+      call any tool other than returning your answer. Return exactly {"ok": true}.
+    output_type: smoke-ai
+    output_format: &ai_ok
+      type: object
+      properties:
+        ok: { type: boolean }
+      required: [ok]
+      additionalProperties: false
+
+  - id: ai-fast
+    model: "@devflow-fast"
+    effort: low
+    allowed_tools: []
+    idle_timeout: 180000
+    prompt: *ai_prompt
+    output_type: smoke-ai
+    output_format: *ai_ok
+
+  - id: ai-ci
+    model: "@devflow-ci"
+    effort: low
+    allowed_tools: []
+    idle_timeout: 180000
+    prompt: *ai_prompt
+    output_type: smoke-ai
+    output_format: *ai_ok
+
+  - id: ai-cross
+    model: "@devflow-cross"
+    effort: low
+    allowed_tools: []
+    idle_timeout: 180000
+    prompt: *ai_prompt
+    output_type: smoke-ai
+    output_format: *ai_ok
+
+  - id: summary
+    depends_on: [tools, forge-check, resolve, jira, ai-main, ai-fast, ai-ci, ai-cross]
+    trigger_rule: all_done
+    always_run: true
+    script: summary
+    runtime: bun
+    timeout: 60000
+    with:
+      probes: { outputs: smoke-probe }
+      ai: { outputs: smoke-ai }
+      forge: { outputs: forge-access }
+    output_format:
+      type: object
+      properties:
+        ok: { type: boolean }
+        failures: &brief_rows
+          type: array
+          items:
+            type: object
+            properties:
+              check: { type: string }
+              detail: { type: string }
+              hint: { type: string }
+            required: [check, detail, hint]
+            additionalProperties: false
+        warnings: *brief_rows
+        report_path: { type: string }
+      required: [ok, failures, warnings, report_path]
+      additionalProperties: false

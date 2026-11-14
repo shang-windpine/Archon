@@ -1,0 +1,70 @@
+# <repo>/.archon/packs/devflow.yaml — this repository's devflow pack settings.
+# Written by devflow/scripts/install.sh when absent. Only `settings:` is allowed at the
+# top level, and only the names below: an unknown name or a bad enum value refuses the
+# run at start. Every value is text; a list is comma-separated with no empty items.
+# One run can override any setting with `--input name=value`.
+#
+# Command templates: `{token}` is replaced by a shell-quoted value before `sh -c` runs
+# the command, so never put a token inside quotes. Credentials never go here (this file
+# is copied into worktrees): tools use their own login, or ~/.archon/.env.
+settings:
+  # Prints one Jira issue for devflow-refine. {key} is the KEY (for example ABC-123).
+  # The default needs jira-cli (`jira init` once). Empty: refine never fetches Jira and
+  # works only from inbox/*.md, brief_file and the run message.
+  jira_view_cmd: "jira issue view {key} --plain --comments 30"
+
+  # Posts the final requirement as a Jira comment. {key} is the KEY, {file} the path of
+  # the comment body. Empty (default): devflow never writes to Jira.
+  # Example: "jira issue comment add {key} --template {file} --no-input"
+  jira_comment_cmd: ""
+
+  # Local checkstyle; exit code 0 means clean. devflow-deliver runs it before every
+  # push, asks an agent to fix violations, and refuses to push while it still fails.
+  checkstyle_cmd: "__MVN__ -B -q checkstyle:check"
+
+  # An extra fast local check before every push, such as one module's unit tests.
+  # Empty (default) skips it. Example: "__MVN__ -B -q -pl core -am test"
+  local_verify_cmd: ""
+
+  # request: after every push devflow asks Copilot to review (copilot_request_cmd).
+  # auto:    a repository ruleset requests Copilot reviews; devflow only waits.
+  # off:     devflow does not wait for Copilot at all.
+  copilot_mode: request
+
+  # How a review is requested in request mode. {number} is the PR number, {repo} is
+  # owner/name. `--add-reviewer @copilot` needs gh >= 2.88 and is not available on
+  # GitHub Enterprise Server.
+  copilot_request_cmd: "gh pr edit {number} --repo {repo} --add-reviewer @copilot"
+
+  # Logins that identify Copilot as a review author (case-insensitive exact match).
+  copilot_logins: "copilot-pull-request-reviewer,copilot-pull-request-reviewer[bot],copilot,Copilot"
+
+  # Seconds between polls of the PR's reviews and checks.
+  poll_interval_sec: "60"
+
+  # Minutes to wait for Copilot to review the current head before asking a person.
+  copilot_wait_min: "30"
+
+  # Minutes to wait for CI on the current head to settle before asking a person.
+  ci_wait_min: "90"
+
+  # Check names that must be present and green (exact names as GitHub shows them,
+  # comma-separated). Empty (default): the forge's overall check summary must be green.
+  # Example: "build,unit-tests"
+  required_checks: ""
+
+  # When devflow-refine asks a person between review rounds.
+  # auto: when the reviewer needs a person or approves. always: every round.
+  # never: only when the reviewer approves (finalizing always takes a person).
+  refine_human: auto
+
+  # Free text for agents: which paths or modules are the UI side, and which are the
+  # External API side. Used to classify a change and plan local tests.
+  # Example ui_hint: "web/ (React app), src/main/resources/templates/"
+  # Example api_hint: "api/src/main/java/**/controller/, openapi/*.yaml"
+  ui_hint: ""
+  api_hint: ""
+
+  # Repository path of the guidance file agents should read first (for example
+  # AGENTS.md). Empty (default): agents discover the project's guidance themselves.
+  project_notes: ""

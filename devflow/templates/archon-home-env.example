@@ -1,0 +1,34 @@
+# ~/.archon/.env (or $ARCHON_HOME/.env) — secrets Archon hands to workflow nodes.
+# Never put these in the Java repository's .env (Archon strips those keys) or in
+# .archon/config.yaml `env:` (that file can be committed). Values here are redacted in
+# Archon's transcripts, but keep the file private: chmod 600 ~/.archon/.env
+
+# --- GitHub --------------------------------------------------------------------------
+# Preferred: no token here at all. Run `gh auth login` once; the forge plugin then uses
+# `gh auth token` (devflow-smoke reports the credential source it found).
+# Only if gh login is not possible, set a token with repo + pull request + checks access:
+# GH_TOKEN=ghp_xxx
+# Never leave an empty `GH_TOKEN=` line: an empty value refuses instead of falling back
+# to gh. Delete the line instead.
+
+# --- Claude --------------------------------------------------------------------------
+# Claude runs through your Claude Code subscription login (`claude` then /login).
+# For a headless machine, `claude setup-token` prints a long-lived token:
+# CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-xxx
+#
+# Do NOT set ANTHROPIC_API_KEY unless you intend API billing: it is passed to the
+# Claude subprocess and switches it from your subscription to per-token API charges.
+# It is also what Pi uses for its `anthropic/...` models.
+
+# --- Pi ------------------------------------------------------------------------------
+# Pi reads ~/.pi/agent/auth.json (written by `pi /login`) and its own env vars. Put a
+# backend key here only when you do not use `pi /login`, for example:
+# OPENROUTER_API_KEY=sk-or-xxx
+# A custom gateway's key can live in ~/.pi/agent/models.json as "$MY_GATEWAY_KEY"
+# and be defined here:
+# MY_GATEWAY_KEY=xxx
+
+# --- Jira ----------------------------------------------------------------------------
+# Nothing here. jira-cli keeps its own credentials (`jira init`; the API token comes
+# from its JIRA_API_TOKEN env var or the OS keychain). If you export JIRA_API_TOKEN for
+# jira-cli, put it in your shell profile or here; Archon passes it through unchanged.
