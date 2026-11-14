@@ -6,14 +6,15 @@
  * the checkout's branch, forge access for the checkout's remote (plugin, operations,
  * credential, one authenticated read), `gh` when Copilot reviews are requested, and
  * the pull request named by the `pr` input. Then it copies the requirement (and an
- * unconsumed devflow-verify follow-up) into the run and writes the first work order.
+ * unconsumed devflow-verify follow-up) into the run and writes round 1's work order,
+ * which control puts in place.
  */
 
 import { copyFileSync, existsSync, writeFileSync } from 'node:fs';
 import { emit, input, refuse } from 'archon:script';
 import { artifactPath, statePath, validateKey } from '../../.shared/lib/devflow.ts';
 import { parseDeliverSettings } from '../../.shared/lib/deliver-settings.ts';
-import { renderWorkOrder } from '../../.shared/lib/deliver-work.ts';
+import { renderWorkOrder, WORK_FILES } from '../../.shared/lib/deliver-work.ts';
 import { checkForgeAccess } from '../../.shared/lib/forge-check.ts';
 import { git, gitOrThrow } from '../../.shared/lib/git.ts';
 import { sameRepo } from '../../.shared/lib/identity.ts';
@@ -83,6 +84,7 @@ try {
     copilot_wait_min: input('copilot_wait_min'),
     ci_wait_min: input('ci_wait_min'),
     required_checks: input('required_checks'),
+    allow_skipped_checks: input('allow_skipped_checks'),
   });
   const base = (process.env.BASE_BRANCH ?? '').trim();
   if (base === '')
@@ -137,8 +139,9 @@ try {
   const hasFollowup = existsSync(followupSource);
   const followupPath = hasFollowup ? artifactPath('followup-work.md') : null;
   if (followupPath !== null) copyFileSync(followupSource, followupPath);
+  // Round 1's pristine work: control copies it into place at every round 1 (WORK_FILES).
   writeFileSync(
-    artifactPath('work-order.md'),
+    artifactPath(WORK_FILES.round1.order),
     renderWorkOrder({
       key,
       round: 1,
@@ -149,7 +152,7 @@ try {
       escalationPath: null,
     })
   );
-  writeFileSync(artifactPath('work-threads.json'), '[]\n');
+  writeFileSync(artifactPath(WORK_FILES.round1.threads), '[]\n');
 
   emit({
     repo: { host: repo.host, path: repo.path },

@@ -19,9 +19,17 @@ import {
   type TypedRecord,
 } from '../../.shared/lib/smoke.ts';
 
+/**
+ * The run's frozen alias map is not visible to a script, so the hint names the alias
+ * and where its provider/model is shown; the provider's error above names the ref it
+ * tried (Pi: "Pi model not found: provider=... model=...").
+ */
 const ALIAS_HINT = (alias: string): string =>
-  `Define ${alias} under aliases: in ~/.archon/config.yaml (or $ARCHON_HOME/config.yaml) and log in to its provider ` +
-  '(`claude` /login for Claude, `pi /login` or the backend key in ~/.archon/.env for Pi); `archon doctor` checks both.';
+  `${alias} failed. \`archon ai alias list\` shows the provider/model it resolves to. If the error names a model ` +
+  'that does not exist, fix the ref (Pi: `pi --list-models <model-id>` must list it; Claude: opus, sonnet, haiku or a full id) ' +
+  'with `archon ai alias set`. If the alias is undefined, define it under aliases: in ~/.archon/config.yaml ' +
+  '(or $ARCHON_HOME/config.yaml). Otherwise log in to its provider (`claude` /login; `pi /login` or the backend ' +
+  'key in ~/.archon/.env for Pi); devflow/scripts/doctor.sh checks aliases, logins and Pi model refs.';
 
 /** Next steps for a node that failed outright, by the node ids in devflow-smoke.yaml. */
 const FAILURE_HINTS: Readonly<Record<string, string>> = {

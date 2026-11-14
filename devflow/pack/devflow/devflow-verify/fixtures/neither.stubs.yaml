@@ -12,6 +12,7 @@ context:
   results_path: /state/devflow/DEMO-1/verify-results.md
   report_path: /state/devflow/DEMO-1/verify-report.md
   followup_path: /state/devflow/DEMO-1/followup-work.md
+  followup_notice: ""
   files_source: git
   changed_files: 1
   warnings: 1

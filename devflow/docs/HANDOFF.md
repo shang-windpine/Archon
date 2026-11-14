@@ -88,10 +88,10 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
 
 - 节点上只写 alias，不写 `provider:`；provider 和 model 由 `~/.archon/config.yaml` 的 `aliases:` 决定。alias 未定义时，run 在启动前就失败。
 - 为什么评审要用另一个 provider：为了避免自我确认。写的人和审的人如果是同一个模型、同一段上下文，评审基本只会附和。
-- **会话事实（已核对引擎源码 `packages/workflows/src/dag/nodes/agent/dispatch.ts` 的 `selectSession`，以及 `run-layers.ts`）**：节点没写 `context:` 时，顺序执行的 AI 节点会**继承上一个同 provider 节点的会话**；遇到 provider 不同的节点、或处在并行层的节点，才会开新会话；loop 每一轮的第一轮总是新会话，`fresh_context: true` 让之后每轮也是新会话。由此得出：
-  - `@devflow-cross` 是 Pi 时，review / plan-review / judge-threads 总是新会话，看不到起草者的推理。这是 E2E 验证过的配置。
-  - **如果把 `@devflow-cross` 配成 claude**（`templates/archon-home-config.yaml` 的默认写法就是 claude/sonnet），refine 循环里的 `review` 紧跟在 `draft`（claude）后面，会继承 draft 的会话，违背 DESIGN §5"不看 draft 的推理"。judge-threads 与 judge-ci 并行，不受影响；plan-review 跟在并行层后面，也不受影响。所以 **`@devflow-cross` 必须用 Pi（或任何非 claude 的 provider），没有例外**，DESIGN §4 也写成了硬要求。注意：模板、`install.sh` 的 Next steps 和 `doctor.sh` 的 fix 提示目前仍给出 claude/sonnet（§8.1 第 1 条），照抄就会踩中这个问题。修复方法见 §8.1。
-  - 同一规则的另一面：`pr-text` 紧跟 `implement`（都是 claude），会继承 implement 的会话。这是有意允许的（写 PR 文本需要知道改了什么），不是缺陷。
+- **会话事实（已核对引擎源码 `packages/workflows/src/dag/nodes/agent/dispatch.ts` 的 `selectSession`，以及 `run-layers.ts`）**：引擎只记一个「上一个顺序会话」游标（最近一个单独成层、已完成的 AI 节点的会话；script/bash 节点不产生会话，不动它）。节点没写 `context:` 时，顺序执行的 AI 节点**只在这个游标来自同一 provider 时继承它**；provider 不同就开新会话，不会往前找更早的同 provider 节点（`dispatch.ts` 的 `selectSession`）。并行层会清空游标（`run-layers.ts` 的 `runLayer`），写了 `context: fresh` 的节点开新会话。loop_group 第 1 轮不继承循环之前的会话，`fresh_context: true` 让之后每轮也不继承上一轮（`loop-group/iteration.ts`）。由此得出：
+  - 四个评审/判断节点（refine `review`、verify `plan-review`、deliver `judge-threads`、`judge-ci`）都写了 `context: fresh`（`test/lib/reviewer-sessions.test.ts` 检查），所以无论 alias 解析到哪个 provider，它们都看不到起草者/实现者的推理。
+  - `@devflow-cross` 仍然推荐用 Pi 接另一家厂商的模型（E2E 验证过的配置）：同厂商评审自己厂商的产出更容易附和。没有 Pi 的机器可以用模板里的 claude/sonnet 默认值跑起来，`doctor.sh` 对此给 WARN（DESIGN §4）。
+  - 同一规则的另一面：`@devflow-main` 与 `@devflow-fast` 是同一 provider（模板里都是 claude）、且本轮 fix-style 没有运行时，`pr-text` 继承 implement 的会话。这是有意允许的（写 PR 文本需要知道改了什么），不是缺陷。fix-style 运行过时，游标是 fix-style 的会话；provider 不同时 pr-text 从新会话开始，它的 command 本来就让它读 git log/diff。
 
 ### 2.3 上下文管理
 
@@ -117,7 +117,7 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
 | `pack/devflow/devflow-<wf>/devflow-<wf>.yaml` | 各 workflow 的 YAML（每个文件夹恰好一个） |
 | `pack/devflow/devflow-<wf>/commands/*.md` | AI 节点的 prompt（command） |
 | `pack/devflow/devflow-<wf>/scripts/*.ts` | script 节点 |
-| `pack/devflow/devflow-<wf>/fixtures/*.stubs.yaml` | dry-run fixture（`archon workflow test` 回放，共 17 个） |
+| `pack/devflow/devflow-<wf>/fixtures/*.stubs.yaml` | dry-run fixture（`archon workflow test` 回放，共 18 个） |
 | `templates/archon-home-config.yaml`、`archon-home-env.example` | `~/.archon/config.yaml` 和 `~/.archon/.env` 的模板 |
 | `templates/archon-repo-config.yaml`、`packs-devflow.yaml` | install.sh 写入目标仓库的 `.archon/config.yaml` 和 `.archon/packs/devflow.yaml` |
 | `templates/pi-models.example.json` | Pi 自定义网关 `~/.pi/agent/models.json` 示例 |
@@ -145,8 +145,8 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
 | devflow-verify GRT-1 | `53a43031-fe5e-4bbd-81a1-40a8f0c0b952` | 只涉及 API，生成 4 个用例；人填写结果后 triage 判定全部通过 |
 | devflow-deliver GRT-2（修复后） | `9a533b3c-6931-4f4e-bc04-2c8141935979` | 20 秒内判定 `request_failed`（不再空等）；回答 `skip-copilot` 后第 2 轮 done |
 
-- 当前 `pack/devflow/` 与 E2E 仓库里那份副本逐字节一致（`diff -rq` 无差异）。
-- 离线检查全部通过：`bun test` 208 pass / 0 fail，`tsc` 0 错误，biome 无问题，四个 workflow `validate` 都通过，`workflow test` 17 个 fixture 全部通过，`script types/preload --check` 都是最新。
+- E2E 跑的是 §8.1 修复之前的 pack；E2E 仓库里那份副本已经不是当前版本（§8.1 的修复只经过离线检查）。
+- 离线检查全部通过：`bun test` 223 pass / 0 fail，`tsc` 0 错误，biome 无问题，四个 workflow `validate` 都通过（0 error / 0 warning），`workflow test` 18 个 fixture 全部通过。
 
 ### 4.2 未验证（在工作电脑上第一次用时重点看）
 
@@ -158,7 +158,8 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
 - verify 的 UI 路径（E2E 中只走了 API）；`followup-work.md` → deliver 的真实回流；与 base 冲突时的 merge 路径；deliver 6 轮用完（`on_exhausted: complete`）时的收尾。
 - 多模块 Maven 仓库上 `checkstyle_cmd` 的耗时。超时分三层：checkstyle/publish 脚本里每条命令 20 分钟；`checkstyle` 节点整体 45 分钟（`checkstyle_cmd` 加 `local_verify_cmd`）；`fix-style` 每次修完后重跑 checkstyle 的 `until_bash` 25 分钟。
 - GitHub Enterprise Server：`--add-reviewer @copilot` 在 GHES 上不可用，只测过 github.com。
-- `@devflow-cross` 配成 claude 的情况（见 §2.2，会继承会话，所以不允许）。
+- `@devflow-cross` 配成 claude 的真实运行（评审节点有 `context: fresh`，会话隔离由源码和测试保证，但没有真机跑过）。
+- `allow_skipped_checks` 与 draft 上被跳过的 CI：只在单元测试中覆盖过。
 
 ### 4.3 已知限制
 
@@ -166,7 +167,7 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
 - `archon workflow test` 不跟随符号链接：用 `install.sh --link` 安装的 pack 跑不了 fixture。
 - 引擎日志会把 `--input` 的值显示为 `[REDACTED]`；排障时以 run id 和 artifacts 为准，冻结的 settings 值用 `archon workflow get <run-id> --json | jq .metadata.inputs` 看（[TROUBLESHOOTING.md](TROUBLESHOOTING.md) §2.8）。
 - run 启动时就冻结 workflow 源码和 AI 配置；resume 用的是旧源码。改了 YAML 或 alias，必须开一个新 run。
-- loop_group 失败后 resume，会从第 1 轮重新开始（引擎文档 `packages/docs-web/src/content/docs/guides/loop-nodes.md` 的「Failure resume」）。对 deliver 这还会读到上一次最后一轮的旧工单（§8.1 第 2 条），所以 deliver 在 `rounds` 里失败时不要 resume，按 [OPERATIONS.md](OPERATIONS.md) §3.7 abandon 后用同一个 `--branch` 开新 run。
+- loop_group 失败后 resume，会从第 1 轮重新开始（引擎文档 `packages/docs-web/src/content/docs/guides/loop-nodes.md` 的「Failure resume」）。deliver 的 control 在每个第 1 轮从 preflight 的原件重写工单（§8.1 第 2 条已修），但第 1 轮的 `implement` 仍会再跑一次（花钱），轮次编号也从 1 重数。没改 pack 和 settings 时可以 resume，也可以「abandon 后用同一个 `--branch` 开新 run」，但两者不等价：resume 保留本 run 的 `reruns.json`、`copilot-requests.json`、`human-answers.md`、`copilot-skipped`、`thread-notes.json`，新 run 没有这些，会重新请求 Copilot、重新 rerun，之前的 skip-copilot 和回答要重新给；resume 时第 1 轮的 PR 编号是 preflight 当时的值，失败前才建 PR 的话 `pr-text` 会多跑一次。改了 pack 或 settings 就只能开新 run（[OPERATIONS.md](OPERATIONS.md) §3.7 规则 3）。
 - Pi 的结构化输出是 best-effort：不合 schema 时重问 3 次，仍失败则节点失败。
 - 语言混用：Claude 节点会加载用户的 `~/.claude/CLAUDE.md`，所以结构化字段可能是中文，按 policy 写的文件多为英文。这是 provider 原生配置在起作用，属于预期行为。
 - Copilot 不可用时，每次 deliver 都会在第 1 轮停下来问人（`request_failed`）。可以长期设置 `copilot_mode: off`，或者回答时选 `skip-copilot`。
@@ -202,7 +203,7 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
   - attention wait（`gate`、`escalate`）必须是 body **唯一的终端 sink**：没有节点依赖它，其他节点都通向它；每个 body 最多一个 wait；body 里不能放 `workflow:` 子 run，也不能在更深一层的 loop_group 里放 wait。
   - `until_bash` 只读 `control`（refine）/ `act`（deliver）的输出，**绝不读可能被 `when:` 跳过的 wait**；读了被跳过的 wait，整个 group 会失败。
   - 人的回答由下一轮 `control` 通过 `$LOOP_PREV.<wait>.output.decision/.text` 读取（第一轮或 wait 被跳过时为 `''`）。choice 做结构化处理，text 只交给 agent 解释，脚本不解析 text。
-  - `escalate` 的选项 id 必须与 `deliver-work.ts` 的 `ESCALATION_CHOICES` 一致，有测试检查；`gate` 的选项 id（`finalize`/`revise`）必须与 `refine.ts` 的 `GATE_DECISIONS` 一致，**目前没有测试**（§8.1 第 10 条），改时要特别小心。
+  - `escalate` 的选项 id 必须与 `deliver-work.ts` 的 `ESCALATION_CHOICES` 一致，`gate` 的选项 id（`finalize`/`revise`）必须与 `refine.ts` 的 `GATE_DECISIONS` 一致，都有测试检查（`test/lib/deliver-work.test.ts`、`test/lib/refine.test.ts`）。
 - 不要在节点上加 `provider:`、`allowed_tools:`，也不要把 alias 换成字面模型名。alias 决定 provider，而 Claude 与 Pi 的工具名不同（DESIGN §4）。**唯一例外**：smoke 的四个 `ai-*` 节点本来就写了 `allowed_tools: []`（空列表 = 不给任何工具，两种 provider 含义相同），不要删。
 - 不要把 `checkstyle` 节点改成失败时非 0 退出：它必须退出 0 并输出 `ok:false`，否则 `fix-style` 没机会运行。
 - 不要破坏 pack 布局：每个 workflow 文件夹恰好一个 YAML，文件名 stem 等于 `name:`，不用 `archon-` 前缀，pack 根目录不放 YAML，`.pack/pack.yaml` 只放 `inputs:`。（引擎其实允许 `inputs:` 和 `bindings:` 两个顶层键，写别的键整个 pack 加载失败；devflow 不用 trigger，所以约定只放 `inputs:`。）
@@ -248,21 +249,21 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
 
 ## 8. 未决问题与建议的改进
 
-### 8.1 已知的 pack 问题（代码问题，尚未修复）
+### 8.1 已知的 pack 问题（已处理，保留编号供引用）
 
-下面每条都只读代码或实测确认过，**还没改代码**。修任何一条都按 §6.3 走（行为变化先改 DESIGN），修完把这里的条目删掉。编号在其他文档里被引用（例如「HANDOFF §8.1 第 2 条」），删条目时同步改引用。
+下面的编号在其他文档里被引用（例如「HANDOFF §8.1 第 2 条」），所以条目不删，只记录处理结果。新发现的问题接着往后编号。
 
-1. **评审节点会继承起草者的会话**（建议优先）。`review`（refine）、`plan-review`（verify）、`judge-threads`、`judge-ci`（deliver）都没写 `context:`；引擎让顺序执行的同 provider 节点继承会话（§2.2），所以 `@devflow-cross` 是 claude 时 refine 的 `review` 会看到 draft 的推理。修法：在这四个节点上加 `context: fresh`，并加测试或 fixture 说明意图。连带要改的 pack 侧文件：`templates/archon-home-config.yaml` 里 `@devflow-cross` 的默认值（目前 claude/sonnet）、`scripts/install.sh` 的 Next steps（建议 `alias set @devflow-cross claude sonnet`）、`scripts/doctor.sh` 对未定义 alias 的 fix 提示（同样给 `claude sonnet`）。修好之前，`@devflow-cross` 必须配成 Pi。
-2. **deliver 失败后 resume，第 1 轮用的是旧工单。** 引擎对 loop_group 的失败恢复从第 1 轮重跑（§4.3）。`devflow-deliver/scripts/control.ts` 只在 `round > 1` 时重写 `work-order.md` 和 `work-threads.json`，第 1 轮沿用文件里现有的内容，而这两个文件已经被失败前更晚的轮次覆盖。结果：implement 拿到上一次最后一轮的工单（可能是 `No code work this round.`，或标着第 N 轮的工作），publish 按旧的 `work-threads.json` 处理 thread；第 1 轮 `implement` 一定会再跑一次（花钱）。只读代码确认，未实测。修法方向：第 1 轮也由 control 从 preflight 的数据重写这两个文件（或 preflight 另存一份第 1 轮的原件）。修好之前，deliver 在 `rounds.*` 节点失败时不要 resume（[OPERATIONS.md](OPERATIONS.md) §3.7）。
-3. **被跳过的 CI 会被当成绿色。** 引擎 forge 把 check 结论 `skipped` 映射为 `green`（`packages/forge/src/operations.ts` 的 `concludedCheckStates`，这是引擎行为）。公司 CI 如果写了 `if: !github.event.pull_request.draft`，draft PR 上的 job 全是 skipped，deliver 可能在 CI 根本没跑的情况下判定 done；`required_checks` 也拦不住，因为被跳过的 check 名照样出现。pack 侧可以在 `checks_state.units[].result == 'skipped'` 时不算满足 `required_checks`。在修之前，[SETUP.md](SETUP.md) §8.1 要求先确认 CI 在 draft 上真正运行。
-4. **git 版本没有前置检查。** `doctor.sh` 和 devflow-smoke 都只打印 git 版本，不比较；`devflow-deliver/scripts/await.ts` 的 `git merge-tree --write-tree` 需要 git ≥ 2.38，版本太旧时要到 PR 已经开出来之后才失败。
-5. **`doctor.sh` 的 `pi extensions` 检查会误报。** 它的正则要求 `enableExtensions` 前面有缩进；`archon ai alias set` 会把 `~/.archon/config.yaml` 改写成单行 flow 风格（实测），之后即使值是 `false` 也报 WARN。
-6. **`doctor.sh` 的 `jira` WARN 不看仓库 settings。** 不用 Jira（`jira_view_cmd: ""`）时这条 WARN 一直存在，而它的 fix 提示写着「or set jira_view_cmd: ""」，让人以为改完就会消失。
-7. **`doctor.sh` 不校验模型 ref。** 它只检查 alias 是否定义；`@devflow-cross` 指向不存在的 Pi 模型时仍是 PASS，要到 smoke 的 `ai-cross` 才 FAIL，而 smoke 的 fix 提示是通用的（定义 alias、去登录），不提 ref 写错。
-8. **gh 检查口径不一致。** `doctor.sh` 在 gh < 2.88 时总是 FAIL，但 `copilot_mode: off/auto` 根本不需要这个版本（smoke 在这种情况下只给 WARN）；`devflow-smoke/scripts/tools.ts` 跑 `gh auth status` 不带 `--hostname`，preflight 带。
-9. **等待参数的上限只在 preflight 检查。** `poll_interval_sec` ≤ 600、`copilot_wait_min`/`ci_wait_min` ≤ 140 不在 `archon validate workflows` 阶段检查（实测 `"900"` 能通过 validate），要到 deliver 的 preflight 才拒绝。
-10. **refine 的 gate 选项没有一致性测试。** YAML 里 `gate` 的选项（`finalize`/`revise`）与 `.shared/lib/refine.ts` 的 `GATE_DECISIONS` 靠人工保持一致；deliver 的 `ESCALATION_CHOICES` 有 `test/lib/deliver-work.test.ts` 检查，refine 没有。按 Archon `AGENTS.md`，这是一个已经存在的缺陷。
-11. **设计缺口（不是 bug，记录在案）**：`local_verify_cmd` 失败时没有 agent 修复步骤，publish 直接拒绝；judge 的 decline/not_this_change 在同一轮就回复并 resolve，人只能事后在 GitHub 上 unresolve；verify 的 `context` 会把已有的 `followup-work.md` 移进 `verify.history/`，所以出了 follow-up 要先跑 deliver 再跑 verify（[OPERATIONS.md](OPERATIONS.md) §4.5），DESIGN 没写这个交互。
+1. **已修**：评审/判断节点（`review`、`plan-review`、`judge-threads`、`judge-ci`）加了 `context: fresh`，有测试；模板、`install.sh`、`doctor.sh` 统一推荐 `@devflow-cross` 用 Pi，claude 默认值只作为没有 Pi 时的退路；`doctor.sh` 只在能确定同一厂商时 WARN（`cross vendor`：同一个非 Pi provider，或同一个 Pi ref）（DESIGN §4）。
+2. **已修**：preflight 写第 1 轮工单原件，control 在每个第 1 轮复制它并清掉每轮交接文件，跨轮历史保留（DESIGN §6 `control`，`test/deliver/control.test.ts`）。
+3. **已修**：`result == skipped` 的 check 不算绿，除非列在新 setting `allow_skipped_checks` 里（required check 永远不能被跳过）；按名字判断，同名 unit 有一个实际运行过（push 触发的那次）就不算跳过；无其他工作时 act 问人，提示只对非 required 的名字建议 `allow_skipped_checks`（DESIGN §3、§6）。
+4. **已修**：`doctor.sh` 与 devflow-smoke 的 `tools` 都要求 git ≥ 2.38，否则 FAIL。
+5. **已修**：`doctor.sh` 用 `Bun.YAML.parse` 读 `enableExtensions`，flow 风格的文件也能正确判断（已用 `archon ai alias set` 改写过的文件实测）。
+6. **已修**：`doctor.sh` 的 jira WARN 写明「jira_view_cmd 为空时忽略」，因为 doctor 是机器级检查，不读仓库 settings。
+7. **已修**：`doctor.sh` 用 `pi --list-models` 精确核对每个 Pi alias 的 ref（provider 列 + model 列）；smoke 的 `ai-*` 失败提示点名 alias，并说明如何看它解析到的 provider/model、如何核对 ref。
+8. **已修**：`doctor.sh` 在 gh < 2.88 时只 WARN（说明只有 `copilot_mode: request` 才需要，doctor 看不到这个 setting）；smoke 的 `gh auth` 检查移到 `resolve` 探针，带 `--hostname <仓库 host>`，`copilot_mode: request` 时 FAIL。
+9. **已修**：devflow-smoke 的 `tools` 用 `parseDeliverSettings` 校验 deliver 的全部 settings（含等待上限），与 preflight 同一个解析器。
+10. **已修**：`test/lib/refine.test.ts` 检查 `GATE_DECISIONS` 与 YAML 里 `gate` 的选项一致。
+11. **设计缺口的处理**：(a) `local_verify_cmd` 失败不再让 publish refuse：照常 push，act 把失败交给下一轮 implement 并问人（DESIGN §6，fixture `local-verify-failed`）。(b) verify 的 `context` 不再移动未消费的 `followup-work.md`：警告写进 `context.md`，也通过 `followup_notice` 出现在 `run-tests` 给人的提示里（DESIGN §7，`test/verify/context.test.ts`）。(c) judge 的 decline/not_this_change 在同一轮回复并 resolve：保持不变，DESIGN §6 记录了原因。
 
 ### 8.2 引擎行为（不是 pack 问题，只需知道）
 

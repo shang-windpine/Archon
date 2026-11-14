@@ -22,6 +22,19 @@ export function unit(
   };
 }
 
+/** A unit the forge concluded `skipped`, which it counts as green. */
+export function skippedUnit(name: string): CheckUnit {
+  return {
+    unit: { kind: 'check', id: `id-${name}`, name },
+    nativeState: 'completed',
+    phase: 'completed',
+    nativeResult: 'skipped',
+    result: 'skipped',
+    state: 'green',
+    rerun: null,
+  };
+}
+
 /** A snapshot whose summary follows the forge's precedence (red, gated, unknown, pending, green). */
 export function snapshot(
   units: CheckUnit[],

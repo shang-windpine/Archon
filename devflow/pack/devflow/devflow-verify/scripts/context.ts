@@ -4,9 +4,17 @@
  *
  * Only `requirement.md` is required. `delivery.json` and `change-summary.md` are absent
  * when verify runs before deliver or the work was done by hand; the change is then read
- * from git, and context.md says so. A previous verification's plan, results, report and
- * follow-up are moved to `verify.history/` first: this run supersedes them, and a stale
- * follow-up left in place would send fixed failures back to deliver.
+ * from git, and context.md says so. A previous verification's plan, results and report
+ * are moved to `verify.history/` first: this run supersedes them.
+ *
+ * A `followup-work.md` still in the state directory is not archived: devflow-deliver's
+ * finish renames the follow-up it worked from, so one still here was never delivered,
+ * and moving it away would silently drop failures a person found. It stays for the next
+ * deliver run. context.md warns the planners about it, and `followup_notice` puts the
+ * same fact in front of the person at run-tests, since a run that finds no failure
+ * leaves the old list for the next deliver: only the person can tell whether those
+ * failures are fixed and the file should be deleted. If this run finds failures, triage
+ * writes this run's list over it.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -24,7 +32,7 @@ import {
   resolveBaseRef,
 } from '../../.shared/lib/verify.ts';
 
-const SUPERSEDED = ['verify-plan.md', 'verify-results.md', 'verify-report.md', 'followup-work.md'];
+const SUPERSEDED = ['verify-plan.md', 'verify-results.md', 'verify-report.md'];
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -155,6 +163,12 @@ function main(): void {
     report: join(dir, 'verify-report.md'),
     followup: join(dir, 'followup-work.md'),
   };
+  const followupNotice = existsSync(paths.followup)
+    ? `${paths.followup} from an earlier verification has not been delivered yet and stays for the next ` +
+      'devflow-deliver run. If this run finds failures, triage replaces it with this run’s list; if it finds ' +
+      'none and those failures are fixed, delete the file by hand'
+    : '';
+  if (followupNotice !== '') warnings.push(followupNotice);
   const prUrl = delivery?.pr?.url ?? '';
   const contextPath = artifactPath('context.md');
   const lines = [
@@ -196,6 +210,7 @@ function main(): void {
     results_path: paths.results,
     report_path: paths.report,
     followup_path: paths.followup,
+    followup_notice: followupNotice === '' ? '' : `Note: ${followupNotice}.`,
     files_source: listing.source,
     changed_files: listing.files.length,
     warnings: warnings.length,

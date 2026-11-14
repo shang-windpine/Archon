@@ -1,24 +1,58 @@
 /**
  * The first node of each deliver round: number the round and write its work order.
  *
- * Round 1's work order is preflight's. A later round's is the previous round's
- * `next-work.md` (accepted threads, CI failures this change caused, a base conflict)
- * plus the operator's answer to the previous round's escalation, when there was one.
+ * Round 1's work order is preflight's pristine copy (WORK_FILES.round1), copied into
+ * place at every round 1. The engine restarts a loop_group at iteration 1 on a failure
+ * resume, with `$LOOP_PREV` empty again but `$ARTIFACTS_DIR` holding what later rounds
+ * wrote; without the copy, round 1 would implement the last attempt's work order and
+ * publish would answer its threads. A later round's work order is the previous round's
+ * `next-work.md` (accepted threads, CI failures this change caused, a base conflict, a
+ * failed local verify) plus the operator's answer to the previous round's escalation,
+ * when there was one.
+ *
  * Every answer is also appended to `human-answers.md`, which the judges read in later
  * rounds: an answer may decide a thread or a check, not only code. An answer that chose
  * `skip-copilot` writes `$ARTIFACTS_DIR/copilot-skipped`, which stays for the rest of the
  * run and makes request-review and await treat `copilot_mode` as `off`.
+ *
+ * What round 1 resets and what it keeps on a restart:
+ * - Reset: `work-order.md` and `work-threads.json` (from the round 1 copies), and the
+ *   per-round hand-offs in ROUND_SCRATCH (`next-work.md`, `next-threads.json`,
+ *   `escalation.md`). They describe a round of the earlier attempt, and nothing of
+ *   this attempt has produced them yet.
+ * - Kept, because each records something that happened on GitHub or a person decided
+ *   in this run, and stays true after a restart: `reruns.json` (a unit is rerun at most
+ *   once per head, and await tells a started rerun by it), `copilot-requests.json` (the
+ *   heads Copilot was already asked to review; asking again on the same head is what
+ *   GitHub may not record), `human-answers.md` (still the operator's answers; its round
+ *   headings name the attempt they were given in), `copilot-skipped` (the operator's
+ *   choice for the rest of the run, which a resume continues), and `thread-notes.json`
+ *   (the implementer's evidence on threads it did not fix).
  *
  * Bound inputs: previous_round, previous_has_work, previous_pr, answer, answer_choice
  * (all `$LOOP_PREV` text, empty on round 1 or after a skipped escalation), first_pr and
  * requirement (preflight's).
  */
 
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  copyFileSync,
+  existsSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { emit, input, refuse } from 'archon:script';
 import { artifactPath, validateKey } from '../../.shared/lib/devflow.ts';
 import { COPILOT_SKIPPED_ARTIFACT } from '../../.shared/lib/deliver-settings.ts';
-import { controlDecision, fence, renderWorkOrder } from '../../.shared/lib/deliver-work.ts';
+import {
+  controlDecision,
+  fence,
+  ROUND_FILES,
+  ROUND_SCRATCH,
+  renderWorkOrder,
+  WORK_FILES,
+} from '../../.shared/lib/deliver-work.ts';
 
 function readIfExists(path: string): string | null {
   return existsSync(path) ? readFileSync(path, 'utf8') : null;
@@ -35,16 +69,28 @@ try {
     answerChoice: input('answer_choice'),
     firstPr: Number.isInteger(firstPr) && firstPr > 0 ? firstPr : 0,
   });
-  const workOrder = artifactPath('work-order.md');
-  const workThreads = artifactPath('work-threads.json');
-  if (decision.round > 1) {
+  const workOrder = artifactPath(WORK_FILES.current.order);
+  const workThreads = artifactPath(WORK_FILES.current.threads);
+  if (decision.round === 1) {
+    for (const [from, to] of [
+      [WORK_FILES.round1.order, workOrder],
+      [WORK_FILES.round1.threads, workThreads],
+    ] as const) {
+      const source = artifactPath(from);
+      if (!existsSync(source)) throw new Error(`preflight wrote no ${source}`);
+      copyFileSync(source, to);
+    }
+    for (const name of ROUND_SCRATCH) rmSync(artifactPath(name), { force: true });
+  } else {
     const nextWork =
-      input('previous_has_work') === 'true' ? readIfExists(artifactPath('next-work.md')) : null;
+      input('previous_has_work') === 'true'
+        ? readIfExists(artifactPath(ROUND_FILES.nextWork))
+        : null;
     const threads =
       input('previous_has_work') === 'true'
-        ? readIfExists(artifactPath('next-threads.json'))
+        ? readIfExists(artifactPath(ROUND_FILES.nextThreads))
         : null;
-    const escalation = artifactPath('escalation.md');
+    const escalation = artifactPath(ROUND_FILES.escalation);
     if (decision.skipCopilot) {
       writeFileSync(
         artifactPath(COPILOT_SKIPPED_ARTIFACT),

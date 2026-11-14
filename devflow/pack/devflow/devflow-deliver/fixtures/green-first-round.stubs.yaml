@@ -19,6 +19,8 @@ publish:
   pushed: true
   head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   answered: 0
+  verify_ok: true
+  verify_log_path: ""
 request-review: { requested: true, head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, error: "" }
 await:
   head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

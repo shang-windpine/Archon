@@ -126,6 +126,8 @@ export interface RoundFacts {
   readonly rerunsIssued: number;
   /** The rerun record as it was before this round's reruns. */
   readonly rerunHistory: readonly RerunRecord[];
+  /** `local_verify_cmd` failed on the head publish pushed this round. */
+  readonly localVerifyFailed: boolean;
 }
 
 export interface RoundOutcome {
@@ -164,6 +166,17 @@ export function computeRoundOutcome(facts: RoundFacts): RoundOutcome {
   if (unknown.length > 0)
     asks.push(`CI failure(s) of unknown cause: ${unknown.map(j => j.name).join(', ')}`);
   if (facts.conflict) work.push('the branch conflicts with the base branch');
+  // Pushed anyway (publish) so a failure nobody can fix from the code does not end the
+  // run; it is work for the next round, and a person hears of it now because nothing
+  // judged whether the failure is the change's or the environment's. The settings are
+  // frozen, so an environmental failure repeats every round and blocks done: the ask
+  // says so rather than inviting an answer that cannot end it.
+  if (facts.localVerifyFailed) {
+    work.push('local_verify_cmd failed on the pushed head');
+    asks.push(
+      'local_verify_cmd failed on the pushed head; the next round fixes it. If the failure is environmental, an answer cannot end it (the frozen command fails every round): abandon and start a new run with a working local_verify_cmd'
+    );
+  }
 
   const plan = planReruns(
     facts.summary?.redUnits ?? [],
@@ -198,6 +211,24 @@ export function computeRoundOutcome(facts: RoundFacts): RoundOutcome {
     if (facts.summary.stale) blocks.push('the checks snapshot is not of the current head');
     if (facts.summary.missingRequired.length > 0) {
       blocks.push(`required check(s) not reported: ${facts.summary.missingRequired.join(', ')}`);
+    }
+    // Waiting cannot change a skipped result and no agent can fix it, so once the checks
+    // are otherwise green and no work is left a person decides, instead of the round
+    // counting as no progress (summarizeChecks says why skipped is not green).
+    // allow_skipped_checks cannot admit a required name, so it is offered only for the
+    // skipped names that are not required, and the required ones are named apart.
+    const { skipped, skippedRequired } = facts.summary;
+    if (skipped.length > 0 && facts.checks === 'green' && work.length === 0) {
+      const optional = skipped.filter(name => !skippedRequired.includes(name));
+      let ask = `checks skipped on the draft PR: ${skipped.join(', ')} — CI may not run on drafts; make those jobs run on draft pull requests`;
+      if (optional.length > 0)
+        ask += `, or start a new run with allow_skipped_checks listing ${optional.join(', ')}`;
+      if (skippedRequired.length > 0) {
+        ask += `; required_checks must really run, so allow_skipped_checks cannot admit ${skippedRequired.join(', ')} (or remove it from required_checks)`;
+      }
+      asks.push(ask);
+    } else if (skipped.length > 0) {
+      blocks.push(`skipped check(s) do not count as passed: ${skipped.join(', ')}`);
     }
   }
   if (facts.openThreads > 0)

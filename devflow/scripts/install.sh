@@ -127,7 +127,10 @@ Next steps
        archon ai alias set @devflow-main claude opus
        archon ai alias set @devflow-fast claude sonnet
        archon ai alias set @devflow-ci claude sonnet
-       archon ai alias set @devflow-cross claude sonnet   # or: pi <pi-provider>/<model-id>
+       archon ai alias set @devflow-cross pi <pi-provider>/<model-id>
+     @devflow-cross should be another vendor through Pi (check the ref with
+     pi --list-models <model-id>); without Pi, 'claude sonnet' works, but then Claude
+     reviews Claude's work.
      Secrets go in ~/.archon/.env: see $TEMPLATES/archon-home-env.example.
   3. Check the machine:   $DEVFLOW/scripts/doctor.sh
   4. Check this repo:     cd $TARGET && archon validate workflows devflow-smoke

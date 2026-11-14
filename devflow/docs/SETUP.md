@@ -84,7 +84,7 @@ cd <JAVA_REPO> && archon workflow run devflow-smoke  # 期望：结尾 smoke OK
 | gh ≥ 2.88 并已登录 | 请求 Copilot review（`--add-reviewer @copilot`）、forge 凭据 | 2.3、5 | `gh --version`、`gh auth status` |
 | JDK + Maven（或 `./mvnw`） | checkstyle、本地检查 | 2.4 | `java -version`、`./mvnw -v` |
 | Claude Code 登录 | `@devflow-main/fast/ci` 默认都跑在 Claude 上 | 2.5 | `claude auth status --json` |
-| Pi 登录或网关 | `@devflow-cross`（交叉评审，必须是 Pi，原因见 2.6） | 2.6 | `pi auth check --model <ref>` |
+| Pi 登录或网关 | `@devflow-cross`（交叉评审，推荐 Pi 接另一家厂商，取舍见 2.6） | 2.6 | `pi auth check --model <ref>` |
 | jira-cli | devflow-refine 读取 Jira，可选回写评论 | 2.7 | `jira me` |
 | Archon CLI | 运行一切 | 3 | `archon version` |
 | `~/.archon/config.yaml` | 4 个模型 alias | 4 | `archon ai alias list` |
@@ -137,7 +137,7 @@ bun --version
 
 ### 2.2 git ≥ 2.38
 
-为什么有这个要求：devflow-deliver 每一轮都会用 `git merge-tree --write-tree` 检查 PR 与 base 是否冲突，这个用法需要 git 2.38 及以上。**doctor.sh 和 devflow-smoke 只打印 git 版本，不比较版本号**。版本太旧时，要等 PR 已经开出来、到了 `await` 节点才会失败，所以这里必须手动确认。
+为什么有这个要求：devflow-deliver 每一轮都会用 `git merge-tree --write-tree` 检查 PR 与 base 是否冲突，这个用法需要 git 2.38 及以上。版本太旧时，deliver 要等 PR 已经开出来、到了 `await` 节点才会失败；doctor.sh 和 devflow-smoke 的 `git` 一行会提前 FAIL。
 
 ```bash
 git --version
@@ -202,7 +202,7 @@ claude auth status --json
 
 为什么用 Pi：`@devflow-cross` 负责需求 review、Copilot thread 判断和测试计划 review，换一个**不同厂商**的模型，能发现更多问题。Archon 源码里已经带了 Pi SDK，Pi CLI 只用于登录和查看模型列表。
 
-**`@devflow-cross` 必须是 Pi（非 claude 的 provider），本节不能跳过。** 原因：引擎让顺序执行、同一 provider 的 AI 节点继承上一个节点的会话。refine 里 `review` 紧跟在 `draft`（claude）后面，`@devflow-cross` 也是 claude 时，评审者会看到起草者的推理，"独立第二视角"就失效了（[DESIGN.md](DESIGN.md) §4、§5；[HANDOFF.md](HANDOFF.md) §2.2）。pack 修好之前（HANDOFF §8.1 第 1 条）没有例外。模板 `archon-home-config.yaml`、`install.sh` 的 Next steps、`doctor.sh` 的 fix 提示里写的 `claude sonnet` 都是这个已知问题的一部分，**不要照抄**。Pi 实在配不起来时，停下来告诉用户，不要自己改成 claude。
+**`@devflow-cross` 推荐用 Pi 接另一家厂商的模型。** 原因：同一厂商的模型评审自己厂商的产出，更容易附和（[DESIGN.md](DESIGN.md) §4）。会话隔离不依赖 provider：四个评审/判断节点都写了 `context: fresh`，即使 `@devflow-cross` 和 `@devflow-main` 都是 claude，评审者也看不到起草者的推理（[HANDOFF.md](HANDOFF.md) §2.2）。所以没有 Pi 的机器可以先用模板里的 `claude sonnet` 跑起来，doctor.sh 会对此给 WARN。Pi 配不起来时，告诉用户这个取舍，由用户决定是否先用 claude。
 
 ```bash
 npm install -g @earendil-works/pi-coding-agent
@@ -372,7 +372,7 @@ devflow 的 workflow 只写 `@devflow-main`、`@devflow-fast`、`@devflow-ci`、
 | `@devflow-main` | 探索仓库、起草需求、实现与修复、写测试计划 | `claude` / `opus` |
 | `@devflow-fast` | PR 文本、改动摘要、checkstyle 修复 | `claude` / `sonnet` |
 | `@devflow-ci` | CI 失败日志判因 | `claude` / `sonnet` |
-| `@devflow-cross` | 第二视角：需求 review、Copilot thread 判断、测试计划 review | **必须** `pi` / 第 2.6 步得到的 ref（不能是 claude，原因见 2.6） |
+| `@devflow-cross` | 第二视角：需求 review、Copilot thread 判断、测试计划 review | `pi` / 第 2.6 步得到的 ref（另一家厂商；没有 Pi 时 `claude` / `sonnet` 能跑，取舍见 2.6） |
 
 ### 4.1 判断能不能直接复制模板
 
@@ -392,7 +392,7 @@ mkdir -p ~/.archon
 
 - **有输出**（已有真实配置）：手工合并。把模板里的 `defaultAssistant`、`assistants.pi.enableExtensions` 和 `aliases:` 块合并进去。已有的同名 key 先问用户保留哪个。
 
-无论哪种情况，复制或合并后**模板里的 `@devflow-cross` 还是 `claude, model: sonnet`，必须在 4.2 改成 Pi**。
+无论哪种情况，复制或合并后**模板里的 `@devflow-cross` 还是 `claude, model: sonnet`**（给没有 Pi 的机器留的默认值）。配好了 Pi 就在 4.2 改成 Pi。
 
 ### 4.2 改 alias
 
@@ -413,7 +413,7 @@ aliases:
 - Pi 的 model 写第 2.6 步查到的完整 ref。
 - 可选 `effort:`，取值 `minimal | low | medium | high | xhigh | max`。
 
-**也可以用命令设置**：`archon ai alias set @devflow-cross pi my-gateway/deepseek-v4`。但这条命令会把整个文件重写成单行的 flow 风格，**删掉所有注释**（已实测）。功能上没有问题；不过之后 doctor.sh 的 `pi extensions` 检查会误报 WARN（见第 10.2 步，HANDOFF §8.1 第 5 条）。推荐直接改文件。
+**也可以用命令设置**：`archon ai alias set @devflow-cross pi my-gateway/deepseek-v4`。但这条命令会把整个文件重写成单行的 flow 风格，**删掉所有注释**（已实测）。功能上没有问题，doctor.sh 用 YAML 解析读它，单行格式也能正确检查。想保留注释就直接改文件。
 
 保留 `defaultAssistant: claude`：从源码运行时注册了多个 provider，没有默认值的话，不写 provider 的节点会失败。注意 home 配置里的 key 叫 `defaultAssistant`，仓库配置里的叫 `assistant`，两者不能混用。
 
@@ -659,7 +659,7 @@ gh pr checks <N> --repo <OWNER>/<REPO> --json name,workflow,bucket --jq '.[] | [
 | 看到 | 含义 | 处理 |
 |---|---|---|
 | `pass`/`fail`/`pending` | CI 在 draft 上运行，正常 | 继续 |
-| `skipping` | job 因 draft 被跳过。**危险**：forge 把 `skipped` 结论当作绿色，devflow-deliver 可能在 CI 根本没跑的情况下判定 done | 请 CI 负责人允许 draft PR 运行这些 job。在这之前，不要依赖 deliver 的 CI 判定，每个 PR 都要人工看 CI |
+| `skipping` | job 因 draft 被跳过。forge 把 `skipped` 结论当作绿色，但 devflow-deliver 不会：不在 `allow_skipped_checks`（9.7）里的 skipped check 让 checks 不算绿，deliver 会停下来问你（`checks skipped on the draft PR: ...`，[TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.5.9a），而不是判定 done | 请 CI 负责人允许 draft PR 运行这些 job。确实不需要在 PR 上跑的 job（例如只在 main 上跑的发布 job），把名字写进 `allow_skipped_checks` |
 | 没有任何行（`no checks reported`） | draft 上不触发 CI | devflow 每轮会因 `checks: none` 停下来问人。解决办法同上 |
 
 ### 8.2 记下 check 名（用于 `required_checks`）
@@ -761,6 +761,7 @@ git -C <JAVA_REPO> branch -D devflow-probe 2>/dev/null; true
 | `copilot_wait_min` | string（整数） | `"30"` | 9.6 |
 | `ci_wait_min` | string（整数） | `"90"` | 9.6 |
 | `required_checks` | list | `""` | 9.7 |
+| `allow_skipped_checks` | list | `""` | 9.7a |
 | `refine_human` | enum `auto` / `always` / `never` | `auto` | 9.8 |
 | `ui_hint` | string | `""` | 9.9 |
 | `api_hint` | string | `""` | 9.9 |
@@ -829,7 +830,7 @@ JDK 21 及以上即使加了 `-q`，Maven 也可能先打印几行 `WARNING: sun
 
 ### 9.2 `local_verify_cmd`（可选，默认 `""`）
 
-push 前额外执行的快速检查。**失败处理和 checkstyle 不同**：没有 agent 修复步骤（`fix-style` 只修 checkstyle），publish 在最终 HEAD 上复查仍失败就直接拒绝，run 失败，要人修好（[TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.5.1）。所以只放你确定在干净代码上稳定通过的检查。适合放"改动最多的模块的单元测试"，控制在几分钟内跑完（单条命令上限 20 分钟，见 9.1）。不要放全量构建或集成测试：完整 CI 在 GitHub 上跑，devflow 会读它的结果。
+push 前额外执行的快速检查。**失败处理和 checkstyle 不同**：本轮没有 agent 修复步骤（`fix-style` 只修 checkstyle），publish 在最终 HEAD 上复查仍失败时照常 push，act 把失败交给下一轮 implement 去修，同时停下来问你（可能是环境问题，[TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.5.1a）。命令不稳定时每轮都会问你，所以只放你确定在干净代码上稳定通过的检查。适合放"改动最多的模块的单元测试"，控制在几分钟内跑完（单条命令上限 20 分钟，见 9.1）。不要放全量构建或集成测试：完整 CI 在 GitHub 上跑，devflow 会读它的结果。
 
 例子：`./mvnw -B -q -pl core -am test`。`-am` 会把 `core` 依赖的模块一起构建。
 
@@ -901,7 +902,7 @@ gh api repos/<OWNER>/<REPO>/rules/branches/<BASE> --jq '.[] | [.type, (.paramete
 | `copilot_wait_min` | `"30"` | 140 | 等 Copilot review 当前 head 的上限。8.3 实测耗时的 2–3 倍 |
 | `ci_wait_min` | `"90"` | 140 | 等 CI 跑完的上限。取典型 CI 耗时 × 1.5（8.4 记下的值）；CI 超过 90 分钟就调大，但不能超过 140 |
 
-**注意**：上限（600 / 140）**不在** `archon validate workflows` 阶段检查（实测 `poll_interval_sec: "900"` 能通过 validate），要到 devflow-deliver 的 `preflight` 才会拒绝。所以不要超过上限。
+**注意**：上限（600 / 140）**不在** `archon validate workflows` 阶段检查（实测 `poll_interval_sec: "900"` 能通过 validate）。devflow-smoke 的 `deliver settings` 一行用和 devflow-deliver `preflight` 同一个解析器检查全部 deliver settings，超限时 FAIL，所以改完 settings 先跑一次 smoke。
 
 ### 9.7 `required_checks`（list，默认 `""`）
 
@@ -911,6 +912,14 @@ gh api repos/<OWNER>/<REPO>/rules/branches/<BASE> --jq '.[] | [.type, (.paramete
 为什么要填：GitHub 返回的 checks 里没有"哪些是必需的"信息。如果某个必需的 job 根本还没启动，汇总也可能已经是绿色。填上分支保护要求的那些 check 名，就能避免这种误判。
 
 值从 8.2 的输出里**原样复制**（精确匹配、区分大小写），例如：`required_checks: "checkstyle,ut,build (17)"`。名字写错会导致每一轮都等到 `ci_wait_min` 超时再来问你，所以宁可少写，不要写错。
+
+列在这里的 check 必须真正通过：结论为 `skipped` 的 required check 不算通过，即使它也写在 `allow_skipped_checks` 里。
+
+### 9.7a `allow_skipped_checks`（list，默认 `""`）
+
+允许结论为 `skipped` 的 check 名（精确匹配，和 `required_checks` 同样的写法）。
+
+为什么有它：forge 把 `skipped` 当作绿色，而 devflow 的 PR 始终是 draft；写了 `if: !github.event.pull_request.draft` 的 job 在 draft 上总是 skipped，CI 等于没跑。所以默认（空）任何 skipped 的 check 都让 checks 不算绿，deliver 会停下来问你（[TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.5.9a）。8.1 里看到 `skipping` 的 job，如果它确实不需要在 PR 上跑（例如只在 main 上跑的发布 job），就把它的名字写在这里；需要跑的，请 CI 负责人让它在 draft 上运行。
 
 ### 9.8 `refine_human`（enum，默认 `auto`）
 
@@ -993,11 +1002,13 @@ archon doctor; echo "exit=$?"
 | `○ Archon skill: not installed (run archon skill add .)` | skill 是可选的（10.4）。在错误目录执行 `skill add` 会往那个目录写 `.claude/skills/` |
 | `○ Folder project: ...` | 只是说明当前目录不是已注册项目 |
 
-### 10.2 `doctor.sh`（devflow 的机器自检，只读）
+### 10.2 `doctor.sh`（devflow 的机器自检）
 
 ```bash
 bash <ARCHON_SRC>/devflow/scripts/doctor.sh; echo "exit=$?"
 ```
+
+它不写配置和凭据，只运行版本、状态、列表类命令。唯一的写入来自它调用的 `archon doctor`：会创建或打开 `$ARCHON_HOME/archon.db`（连同 `-shm`/`-wal` 文件）。
 
 期望类似（按开发电脑的输出整理；bun 比 pin 新时那一行是 WARN，见下表）：
 
@@ -1007,7 +1018,7 @@ devflow doctor (ARCHON_HOME=/Users/you/.archon)
 PASS  bun                1.4.2 (Archon engines: 1.4.2)
 PASS  git                2.49.0
 PASS  gh                 2.104.0
-PASS  gh auth            logged in
+PASS  gh auth            logged in (devflow-smoke checks the repository's host)
 PASS  claude             logged in (oauth_token)
 PASS  archon             Archon CLI v0.14.0 (...)
 PASS  archon doctor      all checks passed
@@ -1017,6 +1028,8 @@ PASS  @devflow-ci        claude/sonnet
 PASS  @devflow-cross     pi/...
 PASS  pi                 ... (aliases on pi: @devflow-cross)
 PASS  pi config          /Users/you/.pi/agent: auth.json, models.json
+PASS  pi extensions      assistants.pi.enableExtensions: false
+PASS  cross model        pi lists ...
 PASS  jira               ..., jira me answered
 PASS  mvn                3.9.x
 PASS  java               ...
@@ -1030,9 +1043,9 @@ doctor: OK (0 WARN). Next: run the devflow-smoke workflow in the repository.
 
 doctor.sh 的检查范围有限，PASS 不等于全部配好：
 
-- 它**不校验模型 ref**：`@devflow-cross` 指向一个不存在的 Pi 模型时，这一行照样 PASS。ref 是否有效只有 2.6 的 `pi auth check --model <ref>` 和 10.3 的 smoke 能证明。
-- 它**不读仓库的 settings**（`.archon/packs/devflow.yaml`），所以 jira 那一行不知道你是否用 Jira。
-- 它**不比较 git 版本**，git ≥ 2.38 要按 2.2 手动确认。
+- 它只核对 Pi 的模型 ref 在 `pi --list-models` 里（每个解析到 Pi 的 alias 一行 `<role> model`，例如 `cross model`、`main model`；provider 列和 model 列精确比较），不验证登录是否可用；Claude 的 model 名不校验。真正能调用模型由 10.3 的 smoke 证明。
+- 它**不读仓库的 settings**（`.archon/packs/devflow.yaml`），所以 jira 那一行不知道你是否用 Jira，gh 版本也只能按「可能需要」给 WARN（只有 `copilot_mode: request` 需要 gh ≥ 2.88）。这两项由 smoke 按仓库 settings 判断。
+- `gh auth` 只检查任意 host 已登录；仓库所在 host 由 smoke 的 `gh auth` 一行检查。
 
 常见情况：
 
@@ -1040,17 +1053,20 @@ doctor.sh 的检查范围有限，PASS 不等于全部配好：
 |---|---|
 | `WARN bun ... newer than Archon's engines pin` | 通常没问题，可以继续 |
 | `FAIL bun ... older` | 第 2.1 步 |
-| `FAIL gh ... older than 2.88.0` | 升级 gh，或者把 `copilot_mode` 设为 `auto`/`off` |
+| `FAIL git ... older than 2.38.0` | 第 2.2 步 |
+| `WARN gh ... older than 2.88.0` | `copilot_mode: request`（默认）时必须升级 gh；用 `auto`/`off` 时可以忽略 |
 | `FAIL gh auth` | `gh auth login` |
 | `FAIL archon .env ... empty GH_TOKEN= line` | 删掉那一行 |
 | `WARN archon .env ... ANTHROPIC_API_KEY` / `WARN claude env` | 从 `~/.archon/.env` 或 shell 里去掉它（除非用户要走 API 计费） |
 | `FAIL claude not logged in` | `claude` 然后 `/login` |
 | `FAIL archon config ... does not exist` | 第 4 步 |
 | `FAIL archon doctor` | 执行 `archon doctor`，按它报的 `✗` 行处理 |
-| `FAIL @devflow-xxx not defined` | 第 4 步补 alias。fix 提示写的是 `archon ai alias set ... claude sonnet`：对 `@devflow-cross` **不要照做**，它必须是 Pi（2.6） |
+| `FAIL @devflow-xxx not defined` | 第 4 步补 alias，fix 提示给出了对应的命令（`@devflow-cross` 给的是 Pi） |
+| `WARN cross vendor` | doctor 能确定 `@devflow-cross` 和 `@devflow-main` 用的是同一家厂商的模型：两者是同一个非 Pi 的 provider（例如都是 claude），或者是同一个 Pi 模型 ref。能跑（评审节点是新会话），但建议按 2.6 把 `@devflow-cross` 换成 Pi 上另一家厂商的模型。Pi 的 ref 写的是网关而不是厂商，所以两个不同的 Pi ref、或一边 claude 一边 Pi，doctor 都不报，需要你自己确认不是同一家 |
+| `FAIL <role> model ... pi does not list`（例如 `cross model`） | Pi 的 ref 写错或目录过旧：`pi --list-models <关键词>` 查正确的 ref，必要时 `pi update --models`，再改 alias（2.6） |
 | `FAIL pi config no auth.json or models.json` | 第 2.6 步 |
-| `WARN pi extensions ... not false` | 确认 `~/.archon/config.yaml` 里有 `enableExtensions: false`。**已知误报**：用过 `archon ai alias set` 之后文件被改写成单行，即使值是 false，这条检查也会报 WARN。用 `grep -o 'enableExtensions: false' ~/.archon/config.yaml` 确认有输出，就可以忽略 |
-| `WARN jira ...` | 用 Jira：按第 2.7 步装好并 `jira init`。**不用 Jira**：确认 `<JAVA_REPO>/.archon/packs/devflow.yaml` 里 `jira_view_cmd: ""` 和 `jira_comment_cmd: ""` 之后，这条 WARN 会**一直存在**，忽略即可（doctor.sh 不读仓库 settings，fix 提示里的「or set jira_view_cmd」不会让它消失，不要反复改） |
+| `WARN pi extensions ... is <值>` | 在 `~/.archon/config.yaml` 的 `assistants.pi` 下写 `enableExtensions: false`（单行 flow 格式也能被正确识别） |
+| `WARN jira ...` | 用 Jira：按第 2.7 步装好并 `jira init`。**不用 Jira**（`<JAVA_REPO>/.archon/packs/devflow.yaml` 里 `jira_view_cmd: ""`）：忽略，fix 提示也这么写。doctor.sh 不读仓库 settings，这条 WARN 会一直存在 |
 | `FAIL java` | 第 2.4 步 |
 
 ### 10.3 devflow-smoke（在 Java 仓库里做连通性自检）
@@ -1085,19 +1101,20 @@ cd <JAVA_REPO> && archon workflow runs --limit 1          # 第一列是短 run 
 cd <JAVA_REPO> && archon workflow artifacts <run-id> smoke-report.txt
 ```
 
-开发电脑上的实际结果（E2E，16 行全部 PASS 或 SKIP）：
+期望类似（按开发电脑 E2E 的结果整理成当前 pack 的 17 行，全部 PASS 或 SKIP）。E2E 跑的是 HANDOFF §8.1 修复前的 pack，当时是 16 行：没有 `deliver settings` 一行，`gh auth` 排在 `gh copilot reviewer` 之后、detail 是 `gh has a logged-in account`。现在 `gh auth` 由 resolve 探针按仓库的 host 检查，排在 `forge-check` 之后：
 
 ```
 CHECK                STATUS  DETAIL
+deliver settings     PASS    copilot_mode=request, poll 60s, Copilot wait 30 min, CI wait 90 min
 git                  PASS    2.49.0 (/opt/homebrew/bin/git)
 gh                   PASS    2.104.0 (/opt/homebrew/bin/gh)
 gh copilot reviewer  PASS    `gh pr edit --add-reviewer @copilot` is supported
-gh auth              PASS    gh has a logged-in account
 bun                  PASS    1.4.4 (/opt/homebrew/Cellar/bun/1.4.4_1/bin/bun)
 maven                PASS    3.9.10 (/Users/tanshangou/.jenv/shims/mvn)
 java                 PASS    25.0.3 (/Users/tanshangou/.jenv/shims/java)
 jira-cli             SKIP    jira_view_cmd is empty; Jira is not used
 forge-check          PASS    github.com/shang-windpine/devflow-e2e-sandbox via github@1, credential from gh auth token, read verified
+gh auth              PASS    gh is logged in to github.com
 forge resolve        PASS    origin (git@github.com:shang-windpine/devflow-e2e-sandbox.git) -> github.com/shang-windpine/devflow-e2e-sandbox (github@1)
 base branch          PASS    main exists on origin
 jira fetch           SKIP    no key input; pass --input key=<KEY> to fetch one issue
@@ -1115,9 +1132,10 @@ smoke OK (0 warning(s))
 
 | 行 | 典型 detail | 处理 |
 |---|---|---|
-| `git` FAIL | `not on PATH` | 第 2.2 步 |
+| `deliver settings` FAIL | 某个 setting 的错误信息（例如 `ci_wait_min must be at most 140 minutes`） | 改 `.archon/packs/devflow.yaml`，deliver 的 preflight 会以同样的理由拒绝。逐条含义见 [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.4 |
+| `git` FAIL | `not on PATH`，或版本低于 2.38 | 第 2.2 步 |
 | `gh` / `gh copilot reviewer` FAIL | 版本太旧，或 help 里没有 `@copilot` | 升级 gh，或 `copilot_mode: auto/off`。只有在 `request` 模式下才是 FAIL，其他模式是 WARN |
-| `gh auth` WARN | `gh auth status reports no usable login` | `gh auth login` |
+| `gh auth` FAIL / WARN | `` `gh auth status --hostname <host>` reports no usable login `` | `gh auth login --hostname <host>`。`copilot_mode: request` 时是 FAIL（preflight 会拒绝），其他模式是 WARN。这一行在 `resolve` 探针里，紧挨 `forge resolve` |
 | `maven` WARN | 既没有 `./mvnw` 也没有 `mvn` | 第 2.4 步 |
 | `java` WARN | `not on PATH` | 第 2.4 步 |
 | `jira-cli` WARN | `jira_view_cmd is set but jira is not on PATH` | 第 2.7 步，或把 `jira_view_cmd` 设为 `""` |
@@ -1129,8 +1147,8 @@ smoke OK (0 warning(s))
 | `base branch` FAIL | `<b> does not exist on origin` | 改成远端存在的分支 |
 | `base branch` FAIL | `git could not reach origin` | git 本身的网络、代理或凭据问题。执行 `git -C <JAVA_REPO> ls-remote origin` 排查 |
 | `jira fetch` FAIL | `jira_view_cmd exited N` / `timed out` | 手工执行 `jira issue view <KEY> --plain --comments 30`。完整输出在 artifacts 的 `smoke/jira-<KEY>.log`：`archon workflow artifacts <run-id> smoke/jira-<KEY>.log` |
-| `ai-main/fast/ci/cross` FAIL | 节点失败 | alias 没定义，或 provider 没登录。先 `archon workflow get <run-id>` 看 `Reason:` 行。Claude 侧见 2.5；Pi 侧执行 `pi auth check --model <ref>` |
-| `ai-cross` FAIL | detail 或 `Reason:` 含 `Pi model not found: provider='<x>' model='<y>'` | **模型 ref 写错**（下面的通用 `fix:` 提示会让你去定义 alias、去登录，方向不对）。用 `pi --list-models <关键词>` 查正确的 ref（2.6），目录太旧时先 `pi update --models`，然后改 `~/.archon/config.yaml` 的 `@devflow-cross`，重跑 smoke |
+| `ai-main/fast/ci/cross` FAIL | 节点失败 | `fix:` 提示点名 alias，并按顺序列出三种原因：模型 ref 写错、alias 没定义、provider 没登录。`archon ai alias list` 看它解析到的 provider/model；`archon workflow get <run-id>` 的 `Reason:` 行是 provider 的原始报错。Claude 侧见 2.5；Pi 侧执行 `pi auth check --model <ref>` |
+| `ai-cross` FAIL | detail 或 `Reason:` 含 `Pi model not found: provider='<x>' model='<y>'` | **模型 ref 写错**。用 `pi --list-models <关键词>` 查正确的 ref（2.6），目录太旧时先 `pi update --models`，然后改 `~/.archon/config.yaml` 的 `@devflow-cross`，重跑 smoke。doctor.sh 的 `cross model` 一行也会报它（每个 Pi alias 各有一行 `<role> model`） |
 
 如果 run 根本没启动（没有 run id，直接报 `Error:`），有两种形式：
 
@@ -1192,7 +1210,7 @@ git -C <JAVA_REPO> status --short | grep -E 'skills/archon-cli' || echo "not sho
 - [ ] `pi auth check --model <@devflow-cross 的 ref>` 输出 `ready`
 - [ ] （用 Jira 时）`jira me` 正常；`jira issue view <KEY> --plain --comments 30` 正常
 - [ ] `archon version` 显示 `Build: source (bun)`
-- [ ] `archon ai alias list` 列出全部 4 个 `@devflow-*`，并且 `@devflow-cross` 是 `pi/...`（不是 claude）
+- [ ] `archon ai alias list` 列出全部 4 个 `@devflow-*`，并且 `@devflow-cross` 是 `pi/...`（或者用户已知晓用 claude 的取舍，见 2.6）
 - [ ] `~/.archon/.env` 没有 `ANTHROPIC_API_KEY`，没有空的 `GH_TOKEN=`，权限是 600（或者文件不存在）
 - [ ] `<JAVA_REPO>/.archon/workflows/devflow/` 存在；`.git/info/exclude` 里有 `.archon/`
 - [ ] `<JAVA_REPO>/.archon/config.yaml` 有正确的 `worktree.baseBranch`（`git ls-remote --exit-code --heads origin <BASE>` 返回 0），并且保留了 `copyFiles: [.archon/packs/]`

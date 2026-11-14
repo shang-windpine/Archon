@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Check a work machine's prerequisites for the devflow pack. Read-only: it runs
-# version, status and list commands, and never writes a config or credential. It skips
-# the Archon checks when ARCHON_HOME has no config.yaml, because Archon would create one.
+# Check a work machine's prerequisites for the devflow pack. It runs version, status
+# and list commands, and never writes a config or credential. One side effect it cannot
+# avoid: the `archon doctor` it calls creates or opens $ARCHON_HOME/archon.db (with its
+# -shm/-wal files). It skips the Archon checks when ARCHON_HOME has no config.yaml,
+# because Archon would create one.
 #
 #   devflow/scripts/doctor.sh
 #
@@ -17,6 +19,7 @@ ARCHON_SRC="$(cd "$HERE/../.." && pwd)"
 HOME_DIR="${ARCHON_HOME:-$HOME/.archon}"
 PI_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 GH_COPILOT_MIN="2.88.0"
+GIT_MIN="2.38.0"
 ROLES="@devflow-main @devflow-fast @devflow-ci @devflow-cross"
 
 FAILS=0
@@ -73,10 +76,18 @@ else
 fi
 
 # --- git -------------------------------------------------------------------------------
-if have git; then
-  report PASS git "$(git --version | version_of)"
+# devflow-deliver's await checks base conflicts with `git merge-tree --write-tree` (2.38+).
+if ! have git; then
+  report FAIL git "not on PATH" "Install git $GIT_MIN or newer."
 else
-  report FAIL git "not on PATH" "Install git."
+  GIT_V="$(git --version | version_of)"
+  if [ -z "$GIT_V" ]; then
+    report WARN git "\`git --version\` printed no version" "Check that git is $GIT_MIN or newer."
+  elif [ "$(version_cmp "$GIT_V" "$GIT_MIN")" -lt 0 ]; then
+    report FAIL git "$GIT_V is older than $GIT_MIN (no git merge-tree --write-tree)" "Upgrade git; devflow-deliver needs it to check conflicts with the base branch."
+  else
+    report PASS git "$GIT_V"
+  fi
 fi
 
 # --- gh --------------------------------------------------------------------------------
@@ -85,12 +96,15 @@ if ! have gh; then
 else
   GH_V="$(gh --version 2>/dev/null | version_of)"
   if [ "$(version_cmp "$GH_V" "$GH_COPILOT_MIN")" -lt 0 ]; then
-    report FAIL gh "$GH_V is older than $GH_COPILOT_MIN (no --add-reviewer @copilot)" "Upgrade gh, or set copilot_mode: auto|off in the repo's .archon/packs/devflow.yaml."
+    # Only copilot_mode: request needs it, and that is a per-repository setting the doctor
+    # cannot see; devflow-smoke in the repository fails on it when it matters.
+    report WARN gh "$GH_V is older than $GH_COPILOT_MIN (no --add-reviewer @copilot)" "Matters only with copilot_mode: request (the default), which then fails: upgrade gh, or set copilot_mode: auto|off in the repo's .archon/packs/devflow.yaml."
   else
     report PASS gh "$GH_V"
   fi
+  # Any host: the repository's host is per repository, and devflow-smoke checks that one.
   if with_timeout 20 gh auth status >/dev/null 2>&1; then
-    report PASS "gh auth" "logged in"
+    report PASS "gh auth" "logged in (devflow-smoke checks the repository's host)"
   elif [ -f "$HOME_DIR/.env" ] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?GH_TOKEN=.+' "$HOME_DIR/.env"; then
     report WARN "gh auth" "gh is not logged in; GH_TOKEN is set in $HOME_DIR/.env" "Fine for the forge plugin; gh itself (Copilot review requests) also needs it: gh auth login."
   else
@@ -149,6 +163,9 @@ fi
 
 # --- ARCHON_HOME config and the four aliases --------------------------------------------
 PI_ALIASES=""
+PI_REFS=""
+MAIN_TARGET=""
+CROSS_TARGET=""
 if [ ! -f "$HOME_DIR/config.yaml" ]; then
   # Archon creates a default config on first use; the doctor does not, so nothing is written.
   report FAIL "archon config" "$HOME_DIR/config.yaml does not exist" "Copy devflow/templates/archon-home-config.yaml there (or merge its aliases: block)."
@@ -173,12 +190,33 @@ elif [ "$ARCHON_OK" -eq 1 ]; then
     while read -r role target; do
       [ "$role" = UNREADABLE ] && continue
       if [ "$target" = MISSING ]; then
-        report FAIL "$role" "not defined" "archon ai alias set $role claude sonnet   (see devflow/templates/archon-home-config.yaml)"
+        case "$role" in
+          @devflow-cross) FIX="archon ai alias set $role pi <pi-provider>/<model-id>   (no Pi: claude sonnet works, at a cost; see devflow/templates/archon-home-config.yaml)" ;;
+          @devflow-main) FIX="archon ai alias set $role claude opus   (see devflow/templates/archon-home-config.yaml)" ;;
+          *) FIX="archon ai alias set $role claude sonnet   (see devflow/templates/archon-home-config.yaml)" ;;
+        esac
+        report FAIL "$role" "not defined" "$FIX"
       else
         report PASS "$role" "$target"
-        case "$target" in pi/*) PI_ALIASES="$PI_ALIASES $role" ;; esac
+        case "$target" in pi/*) PI_ALIASES="$PI_ALIASES $role"; PI_REFS="$PI_REFS $role=${target#pi/}" ;; esac
+        case "$role" in
+          @devflow-main) MAIN_TARGET="$target" ;;
+          @devflow-cross) CROSS_TARGET="$target" ;;
+        esac
       fi
     done <<< "$ROLE_LINES"
+    # Review nodes start fresh sessions either way; a second vendor is what makes the
+    # review a second opinion (DESIGN §4). Only a same-vendor pair the doctor can prove
+    # is reported: one non-Pi provider (each serves one vendor's models), or the same
+    # Pi model ref. A Pi ref names a gateway, not a vendor, so other pairs say nothing.
+    MAIN_PROVIDER="${MAIN_TARGET%%/*}"
+    if [ -n "$MAIN_TARGET" ] && [ -n "$CROSS_TARGET" ]; then
+      if [ "$MAIN_TARGET" = "$CROSS_TARGET" ]; then
+        report WARN "cross vendor" "@devflow-cross is the same model as @devflow-main ($CROSS_TARGET)" "Works (reviewers get a fresh session), but a model reviewing its own work agrees more; point @devflow-cross at another vendor's model, through Pi: archon ai alias set @devflow-cross pi <pi-provider>/<model-id>."
+      elif [ "$MAIN_PROVIDER" != pi ] && [ "$MAIN_PROVIDER" = "${CROSS_TARGET%%/*}" ]; then
+        report WARN "cross vendor" "@devflow-cross and @devflow-main both run on $MAIN_PROVIDER, so on one vendor's models" "Works (reviewers get a fresh session), but a model reviewing its own vendor's work agrees more; use Pi with another vendor's model: archon ai alias set @devflow-cross pi <pi-provider>/<model-id>."
+      fi
+    fi
   fi
 fi
 
@@ -201,18 +239,50 @@ else
   else
     report FAIL "pi config" "no auth.json or models.json in $PI_DIR" "pi then /login, or add a gateway to $PI_DIR/models.json (devflow/templates/pi-models.example.json)."
   fi
-  if [ -f "$HOME_DIR/config.yaml" ] && ! grep -Eq '^[[:space:]]+enableExtensions:[[:space:]]*false' "$HOME_DIR/config.yaml"; then
-    report WARN "pi extensions" "assistants.pi.enableExtensions is not false in $HOME_DIR/config.yaml" "Unattended devflow nodes should not load Pi extensions; see devflow/templates/archon-home-config.yaml."
+  # A YAML parse, not a line match: `archon ai alias set` rewrites the file in flow style
+  # ({assistants: {pi: {enableExtensions: false}}, ...}).
+  if [ -f "$HOME_DIR/config.yaml" ]; then
+    EXT="$(bun -e '
+      try {
+        const doc = Bun.YAML.parse(await Bun.file(process.argv[1]).text());
+        const value = doc?.assistants?.pi?.enableExtensions;
+        console.log(value === false ? "off" : value === undefined ? "unset" : `${value}`);
+      } catch { console.log("unreadable"); }' "$HOME_DIR/config.yaml" 2>/dev/null)"
+    case "$EXT" in
+      off) report PASS "pi extensions" "assistants.pi.enableExtensions: false" ;;
+      unreadable|"") report WARN "pi extensions" "could not parse $HOME_DIR/config.yaml" "Run ${ARCHON[*]:-archon} doctor; Archon reports a config it cannot load." ;;
+      *) report WARN "pi extensions" "assistants.pi.enableExtensions is $EXT in $HOME_DIR/config.yaml (Pi loads extensions unless it is false)" "Unattended devflow nodes should not load Pi extensions; set assistants.pi.enableExtensions: false (devflow/templates/archon-home-config.yaml)." ;;
+    esac
   fi
+  # Each Pi ref must be a model Pi lists: <pi-provider>/<model-id>, compared exactly
+  # against the provider and model columns (`--list-models` searches fuzzily).
+  for entry in $PI_REFS; do
+    role="${entry%%=*}"; ref="${entry#*=}"
+    if ! have pi; then
+      report WARN "${role#@devflow-} model" "pi CLI not on PATH; $ref not checked" "Install the pi CLI, then pi --list-models '${ref#*/}' must list provider ${ref%%/*}."
+      continue
+    fi
+    LISTED="$(with_timeout 60 pi --list-models "${ref#*/}" 2>/dev/null)"
+    if [ -z "$LISTED" ]; then
+      report WARN "${role#@devflow-} model" "pi --list-models gave no answer for $ref" "Run pi --list-models '${ref#*/}' by hand."
+    elif printf '%s\n' "$LISTED" | awk -v p="${ref%%/*}" -v m="${ref#*/}" '$1 == p && $2 == m { found = 1 } END { exit !found }'; then
+      report PASS "${role#@devflow-} model" "pi lists $ref"
+    else
+      report FAIL "${role#@devflow-} model" "pi does not list $ref" "The ref is <pi-provider>/<model-id> as pi --list-models shows them (provider column, then model column); fix it with archon ai alias set $role pi <pi-provider>/<model-id>."
+    fi
+  done
 fi
 
 # --- jira-cli --------------------------------------------------------------------------
+# Machine-level: whether a repository uses Jira is its jira_view_cmd setting, which the
+# doctor does not read (devflow-smoke in the repository does). These WARNs stay even
+# when no repository uses Jira.
 if ! have jira; then
-  report WARN jira "jira-cli not on PATH" "Install https://github.com/ankitpokhrel/jira-cli and run jira init, or set jira_view_cmd: \"\" in the repo's .archon/packs/devflow.yaml."
+  report WARN jira "jira-cli not on PATH" "Ignore if jira_view_cmd is empty in your repo's .archon/packs/devflow.yaml. Otherwise install https://github.com/ankitpokhrel/jira-cli and run jira init."
 elif with_timeout 30 jira me >/dev/null 2>&1; then
   report PASS jira "$(jira version 2>/dev/null | version_of), jira me answered"
 else
-  report WARN jira "jira me failed" "Run jira init (server, login, API token via JIRA_API_TOKEN or the keychain), then jira me."
+  report WARN jira "jira me failed" "Ignore if jira_view_cmd is empty in your repo. Otherwise run jira init (server, login, API token via JIRA_API_TOKEN or the keychain), then jira me."
 fi
 
 # --- Maven and Java --------------------------------------------------------------------

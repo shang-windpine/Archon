@@ -37,7 +37,13 @@ aliases:
   # CI failure log triage.
   '@devflow-ci': { provider: claude, model: sonnet }
   # The second opinion: requirement review, Copilot thread judgement, test-plan review.
-  # A different vendor than @devflow-main catches more; with Pi, for example:
+  # Use Pi with another vendor's model (DESIGN §4): a model reviewing its own vendor's
+  # work tends to agree with it. Replace the line below with your Pi ref, for example:
   #   '@devflow-cross': { provider: pi, model: openrouter/<vendor>/<model-id> }
   #   '@devflow-cross': { provider: pi, model: my-gateway/deepseek-v4 }
+  # Check the ref with `pi --list-models <model-id>` (devflow/scripts/doctor.sh does).
+  # The claude default below exists so a machine without Pi still runs: every review
+  # node starts a fresh session (`context: fresh`), so the reviewer never sees the
+  # drafter's or implementer's reasoning, but it is the same vendor judging its own
+  # work, and doctor.sh warns about it.
   '@devflow-cross': { provider: claude, model: sonnet }

@@ -14,7 +14,7 @@ git clone -b devflow https://github.com/shang-windpine/Archon.git ~/Archon && cd
 # 2. 安装依赖，让 archon 命令可用（PATH 问题见 SETUP §3.2）
 bun install && (cd packages/cli && bun link)
 # 3. 本机配置 ~/.archon/config.yaml 和 ~/.archon/.env：按 SETUP §4、§5 做
-#    （先判断文件是否已有真实内容，再复制模板；@devflow-cross 必须改成 Pi，原因见 SETUP §2.6）
+#    （先判断文件是否已有真实内容，再复制模板；@devflow-cross 推荐改成 Pi，原因见 SETUP §2.6）
 #    然后自检：
 devflow/scripts/doctor.sh
 # 4. 把 pack 装进 Java 仓库（默认复制；不覆盖已有文件），然后按 SETUP §7、§9 编辑两个配置文件

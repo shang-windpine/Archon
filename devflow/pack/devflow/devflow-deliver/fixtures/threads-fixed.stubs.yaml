@@ -20,6 +20,8 @@ publish:
   pushed: true
   head_revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
   answered: 1
+  verify_ok: true
+  verify_log_path: ""
 request-review: { requested: true, head_revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, error: "" }
 await:
   head_revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

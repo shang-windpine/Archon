@@ -44,4 +44,4 @@
 - 真实的 `pr_caused` CI 失败（编译错误/测试失败）→ 下一轮修复 的路径：只在 fixtures 与单元测试中覆盖。
 - 本地 checkstyle 失败 → `fix-style` 修复：只在 fixture 中覆盖。
 - Jira：本机没有 jira-cli，`jira_view_cmd` 路径只用桩命令测过。
-- 公司仓库的 required checks、Actions 是否在 draft PR 上运行（`pull_request` 事件默认包含 draft，但 job 可能写了 `if: !github.event.pull_request.draft`）。被这样跳过的 job 结论是 `skipped`，引擎 forge 会把它当成绿色，deliver 可能在 CI 没跑的情况下判定 done（[HANDOFF.md](HANDOFF.md) §8.1 第 3 条）。
+- 公司仓库的 required checks、Actions 是否在 draft PR 上运行（`pull_request` 事件默认包含 draft，但 job 可能写了 `if: !github.event.pull_request.draft`）。被这样跳过的 job 结论是 `skipped`，引擎 forge 会把它当成绿色，这次 E2E 时的 pack 可能因此在 CI 没跑的情况下判定 done；之后的 pack 不再把 skipped 当作通过（`allow_skipped_checks`，[HANDOFF.md](HANDOFF.md) §8.1 第 3 条）。

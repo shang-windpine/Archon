@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import {
   controlStep,
+  GATE_DECISIONS,
   fenced,
   finalizationLines,
   gateAsks,
@@ -105,5 +108,28 @@ describe('finalizationLines', () => {
   });
   test('no notes add nothing', () => {
     expect(finalizationLines('2026-11-14', 'r', [{ source: 's', text: '' }])).toBe('');
+  });
+});
+
+describe('GATE_DECISIONS', () => {
+  test('the decisions are the gate wait options devflow-refine.yaml declares', () => {
+    const workflow = Bun.YAML.parse(
+      readFileSync(
+        join(import.meta.dir, '../../pack/devflow/devflow-refine/devflow-refine.yaml'),
+        'utf8'
+      )
+    ) as {
+      nodes: {
+        id: string;
+        loop_group?: {
+          nodes: { id: string; wait?: { form?: string; options?: { id: string }[] } }[];
+        };
+      }[];
+    };
+    const gate = workflow.nodes
+      .flatMap(node => node.loop_group?.nodes ?? [])
+      .find(node => node.id === 'gate');
+    expect(gate?.wait?.form).toBe('select');
+    expect(gate?.wait?.options?.map(option => option.id)).toEqual([...GATE_DECISIONS]);
   });
 });

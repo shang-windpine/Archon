@@ -56,6 +56,13 @@ inputs:
     description: >-
       Check names that must be present and green (exact match). Empty: the forge summary
       must be green.
+  allow_skipped_checks:
+    type: list
+    default: ""
+    description: >-
+      Check names that may conclude skipped (exact match). Any other skipped check, and a
+      skipped required check, blocks done: the forge counts skipped as green, and a job
+      that skips draft pull requests never tests devflow's draft. Empty: none may be skipped.
   refine_human:
     type: enum
     values: [auto, always, never]

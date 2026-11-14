@@ -79,6 +79,8 @@ function snapshot(threads: string[], red: CheckUnit[], extra: Record<string, unk
       stale: false,
       redUnits: red,
       missingRequired: [],
+      skipped: [],
+      skippedRequired: [],
       settled: true,
       green: red.length === 0,
     },
@@ -95,15 +97,22 @@ function snapshot(threads: string[], red: CheckUnit[], extra: Record<string, unk
   });
 }
 
-function inputs(decisions: unknown, units: unknown): Record<string, string> {
+function inputs(
+  decisions: unknown,
+  units: unknown,
+  extra: Record<string, string> = {}
+): Record<string, string> {
   return {
     key: 'ABC-1',
     base: 'main',
     round: '1',
     pr_url: 'https://github.com/acme/shop/pull/7',
+    local_verify_ok: 'true',
+    local_verify_log: '',
     snapshot_path: '{ARTIFACTS}/snapshot.json',
     decisions: decisions === null ? 'null' : JSON.stringify(decisions),
     units: units === null ? 'null' : JSON.stringify(units),
+    ...extra,
   };
 }
 
@@ -309,5 +318,41 @@ describe('act', () => {
       report_path: '',
     });
     expect(run.requests.map(r => r.op)).toEqual(['pr.threads']);
+  });
+
+  test('a failed local verify is next round work and asks, so a green round is not done', () => {
+    const run = harness.run('act', {
+      artifacts: { 'snapshot.json': snapshot([], []) },
+      inputs: inputs(null, null, {
+        local_verify_ok: 'false',
+        local_verify_log: '/runs/x/local-verify-final.log',
+      }),
+      forge: { 'pr.threads': [threadsAnswer()] },
+    });
+    expect(run.stderr).toBe('');
+    expect(run.output()).toMatchObject({ done: false, has_work: true, ask: true });
+    expect(String(run.output().summary)).toContain('local_verify_cmd failed on the pushed head');
+    const nextWork = readFileSync(join(run.artifacts, 'next-work.md'), 'utf8');
+    expect(nextWork).toContain('## The local verify command fails');
+    expect(nextWork).toContain('/runs/x/local-verify-final.log');
+  });
+
+  test('checks the forge calls green but skipped ask instead of finishing', () => {
+    const skippedSnapshot = JSON.parse(snapshot([], [])) as Record<string, unknown>;
+    skippedSnapshot.checks_summary = {
+      ...(skippedSnapshot.checks_summary as Record<string, unknown>),
+      skipped: ['build'],
+      skippedRequired: [],
+      green: false,
+    };
+    const run = harness.run('act', {
+      artifacts: { 'snapshot.json': JSON.stringify(skippedSnapshot) },
+      inputs: inputs(null, null),
+      forge: { 'pr.threads': [threadsAnswer()] },
+    });
+    expect(run.output()).toMatchObject({ done: false, has_work: false, ask: true });
+    expect(String(run.output().summary)).toContain(
+      'checks skipped on the draft PR: build — CI may not run on drafts'
+    );
   });
 });

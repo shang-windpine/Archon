@@ -38,6 +38,7 @@ export interface RawDeliverSettings {
   readonly copilot_wait_min: string;
   readonly ci_wait_min: string;
   readonly required_checks: string;
+  readonly allow_skipped_checks: string;
 }
 
 /** The settings the await node reads. */
@@ -48,6 +49,8 @@ export interface AwaitSettings {
   readonly copilotWaitMin: number;
   readonly ciWaitMin: number;
   readonly requiredChecks: readonly string[];
+  /** Check names that may report `skipped` without blocking acceptance (summarizeChecks). */
+  readonly allowSkippedChecks: readonly string[];
 }
 
 export interface DeliverSettings extends AwaitSettings {
@@ -74,6 +77,7 @@ export function parseAwaitSettings(
     | 'copilot_wait_min'
     | 'ci_wait_min'
     | 'required_checks'
+    | 'allow_skipped_checks'
   >
 ): AwaitSettings {
   const copilotMode = parseEnum(raw.copilot_mode, COPILOT_MODES, 'request', 'copilot_mode');
@@ -94,6 +98,7 @@ export function parseAwaitSettings(
     copilotWaitMin: waitMinutes(raw.copilot_wait_min, 30, 'copilot_wait_min'),
     ciWaitMin: waitMinutes(raw.ci_wait_min, 90, 'ci_wait_min'),
     requiredChecks: parseList(raw.required_checks),
+    allowSkippedChecks: parseList(raw.allow_skipped_checks),
   };
 }
 

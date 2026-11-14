@@ -60,6 +60,45 @@ describe('control', () => {
     expect(existsSync(join(later.artifacts, 'copilot-skipped'))).toBe(true);
   });
 
+  test('round 1 restores the pristine work order and keeps the run history (failure resume)', () => {
+    // What a failed later round leaves behind when the engine restarts the loop at 1.
+    const run = harness.run('control', {
+      inputs: inputs({ previous_round: '', previous_has_work: '', previous_pr: '' }),
+      artifacts: {
+        'work-order.round1.md': '# Work order: ABC-1, round 1\n\nImplement the requirement.\n',
+        'work-threads.round1.json': '[]\n',
+        'work-order.md': '# Work order: ABC-1, round 3\n\nNo code work this round.\n',
+        'work-threads.json': '["PRRT_9"]\n',
+        'next-work.md': '## Accepted review threads\n',
+        'next-threads.json': '["PRRT_9"]\n',
+        'escalation.md': '# old question\n',
+        'reruns.json': '[{"head":"h","unit":"check:it","at":"x","id":"1"}]\n',
+        'copilot-requests.json': '["h"]\n',
+        'human-answers.md': '## Answer before round 2\n\nKeep 400.\n',
+        'copilot-skipped': 'skip-copilot chosen before round 2\n',
+      },
+    });
+    expect(run.stderr).toBe('');
+    expect(run.output()).toMatchObject({ round: 1, implement: true, pr_number: 7 });
+    const read = (name: string) => readFileSync(join(run.artifacts, name), 'utf8');
+    expect(read('work-order.md')).toBe(read('work-order.round1.md'));
+    expect(read('work-threads.json')).toBe('[]\n');
+    for (const name of ['next-work.md', 'next-threads.json', 'escalation.md'])
+      expect(existsSync(join(run.artifacts, name))).toBe(false);
+    expect(read('reruns.json')).toContain('check:it');
+    expect(read('copilot-requests.json')).toContain('"h"');
+    expect(read('human-answers.md')).toContain('Keep 400.');
+    expect(existsSync(join(run.artifacts, 'copilot-skipped'))).toBe(true);
+  });
+
+  test('round 1 refuses when preflight left no round 1 work order', () => {
+    const run = harness.run('control', {
+      inputs: inputs({ previous_round: '', previous_has_work: '', previous_pr: '' }),
+    });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('preflight wrote no');
+  });
+
   test('refuses a choice the escalate wait does not declare', () => {
     const run = harness.run('control', { inputs: inputs({ answer_choice: 'skip' }) });
     expect(run.status).toBe(1);

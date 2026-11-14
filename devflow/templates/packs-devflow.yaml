@@ -65,6 +65,14 @@ settings:
   # Example: "build,unit-tests"
   required_checks: ""
 
+  # Check names that may conclude "skipped" (exact names, comma-separated). GitHub
+  # counts a skipped check as passing, but devflow's pull request stays a draft, and a
+  # job guarded by `if: !github.event.pull_request.draft` is skipped on every draft: CI
+  # never ran. So any other skipped check blocks done and devflow asks you; a name in
+  # required_checks must really pass even when listed here. Empty (default): no check
+  # may be skipped. Example: "deploy-preview,release-notes"
+  allow_skipped_checks: ""
+
   # When devflow-refine asks a person between review rounds.
   # auto: when the reviewer needs a person or approves. always: every round.
   # never: only when the reviewer approves (finalizing always takes a person).

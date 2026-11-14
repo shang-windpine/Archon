@@ -1,7 +1,11 @@
 /**
- * `script: tools` — the local tools devflow calls, with their versions. Read-only:
- * every command here only prints its version or help. A missing tool the pack needs
- * for every delivery fails; one a setting may route around is a warning.
+ * `script: tools` — the local tools devflow calls, with their versions, and the
+ * devflow-deliver settings. Read-only: every command here only prints its version or
+ * help. A missing tool the pack needs for every delivery fails; one a setting may route
+ * around is a warning. The settings row runs the same parser as deliver's preflight, so
+ * a value preflight would refuse (a wait over its bound, a template with an unknown
+ * token) fails here first; `archon validate workflows` checks only that each is text.
+ * `gh auth` is checked per host by the resolve probe, which knows the repository's host.
  */
 
 import { existsSync } from 'node:fs';
@@ -15,9 +19,12 @@ import {
   parseVersion,
   type Version,
 } from '../../.shared/lib/smoke.ts';
+import { parseDeliverSettings } from '../../.shared/lib/deliver-settings.ts';
 
 /** `gh pr edit --add-reviewer @copilot` first shipped in gh 2.88. */
 const GH_COPILOT_MIN: Version = [2, 88, 0];
+/** devflow-deliver's await runs `git merge-tree --write-tree`, new in git 2.38. */
+const GIT_MIN: Version = [2, 38, 0];
 const COMMAND_TIMEOUT_MS = 30_000;
 
 interface Ran {
@@ -53,12 +60,59 @@ const copilotRequestCmd = input('copilot_request_cmd');
 const jiraViewCmd = input('jira_view_cmd');
 const needsCopilotFlag = copilotMode === 'request' && copilotRequestCmd.includes('@copilot');
 
+try {
+  const settings = parseDeliverSettings({
+    checkstyle_cmd: input('checkstyle_cmd'),
+    local_verify_cmd: input('local_verify_cmd'),
+    copilot_mode: copilotMode,
+    copilot_request_cmd: copilotRequestCmd,
+    copilot_confirm_cmd: input('copilot_confirm_cmd'),
+    copilot_logins: input('copilot_logins'),
+    poll_interval_sec: input('poll_interval_sec'),
+    copilot_wait_min: input('copilot_wait_min'),
+    ci_wait_min: input('ci_wait_min'),
+    required_checks: input('required_checks'),
+    allow_skipped_checks: input('allow_skipped_checks'),
+  });
+  checks.push(
+    check(
+      'deliver settings',
+      'pass',
+      `copilot_mode=${settings.copilotMode}, poll ${String(settings.pollIntervalSec)}s, ` +
+        `Copilot wait ${String(settings.copilotWaitMin)} min, CI wait ${String(settings.ciWaitMin)} min`
+    )
+  );
+} catch (error) {
+  checks.push(
+    check(
+      'deliver settings',
+      'fail',
+      error instanceof Error ? error.message : String(error),
+      'Fix the setting in .archon/packs/devflow.yaml (or the --input override); devflow-deliver’s preflight refuses the same value.'
+    )
+  );
+}
+
 const gitPath = Bun.which('git');
-checks.push(
-  gitPath === null
-    ? check('git', 'fail', 'not on PATH', 'Install git.')
-    : check('git', 'pass', versionDetail(gitPath, run([gitPath, '--version']).output))
-);
+if (gitPath === null) {
+  checks.push(check('git', 'fail', 'not on PATH', 'Install git 2.38 or newer.'));
+} else {
+  const banner = run([gitPath, '--version']).output;
+  const version = parseVersion(banner);
+  const tooOld = version !== undefined && compareVersions(version, GIT_MIN) < 0;
+  checks.push(
+    check(
+      'git',
+      tooOld ? 'fail' : version === undefined ? 'warn' : 'pass',
+      versionDetail(gitPath, banner),
+      tooOld
+        ? `Upgrade git to ${formatVersion(GIT_MIN)} or newer: devflow-deliver checks base conflicts with \`git merge-tree --write-tree\`.`
+        : version === undefined
+          ? `Check that \`git --version\` is ${formatVersion(GIT_MIN)} or newer.`
+          : ''
+    )
+  );
+}
 
 const ghPath = Bun.which('gh');
 if (ghPath === null) {
@@ -91,17 +145,6 @@ if (ghPath === null) {
           needsCopilotFlag ? 'fail' : 'warn',
           `\`gh pr edit --help\` does not document @copilot for --add-reviewer (copilot_mode=${copilotMode})`,
           'Upgrade gh, or set copilot_mode to auto/off in .archon/packs/devflow.yaml. GitHub Enterprise Server does not support @copilot.'
-        )
-  );
-  const auth = run([ghPath, 'auth', 'status']);
-  checks.push(
-    auth.code === 0
-      ? check('gh auth', 'pass', 'gh has a logged-in account')
-      : check(
-          'gh auth',
-          'warn',
-          '`gh auth status` reports no usable login',
-          'Run `gh auth login` (the forge-check row says whether the forge has another credential).'
         )
   );
 }

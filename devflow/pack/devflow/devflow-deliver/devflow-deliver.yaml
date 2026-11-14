@@ -166,7 +166,8 @@ nodes:
             required: [title]
             additionalProperties: false
 
-        # Refuses when the local gate is still red after fix-style.
+        # Refuses when checkstyle is still red after fix-style. A failing local_verify_cmd
+        # is pushed and reported (verify_ok), and act hands it to the next round.
         - id: publish
           script: publish
           runtime: bun
@@ -194,7 +195,9 @@ nodes:
               pushed: { type: boolean }
               head_revision: { type: string }
               answered: { type: integer, minimum: 0 }
-            required: [pr, pushed, head_revision, answered]
+              verify_ok: { type: boolean }
+              verify_log_path: { type: string }
+            required: [pr, pushed, head_revision, answered, verify_ok, verify_log_path]
             additionalProperties: false
 
         # The request (at most 120 s), and up to five confirm reads (60 s each) with 14 s of
@@ -242,9 +245,12 @@ nodes:
             required: [head_revision, copilot, checks, open_threads, red_units, conflict, snapshot_path]
             additionalProperties: false
 
+        # Both judges start a fresh session (context: fresh): neither may inherit the
+        # implementer's conversation, whatever provider the aliases resolve to.
         - id: judge-threads
           command: judge-threads
           model: '@devflow-cross'
+          context: fresh
           mutates_checkout: false
           depends_on: [await]
           when: "$await.output.open_threads > 0"
@@ -269,6 +275,7 @@ nodes:
         - id: judge-ci
           command: judge-ci
           model: '@devflow-ci'
+          context: fresh
           mutates_checkout: false
           depends_on: [await]
           when: "$await.output.red_units > 0"
@@ -301,6 +308,8 @@ nodes:
             base: "$preflight.output.base"
             round: "$control.output.round"
             pr_url: "$publish.output.pr.url"
+            local_verify_ok: "$publish.output.verify_ok"
+            local_verify_log: "$publish.output.verify_log_path"
             snapshot_path: "$await.output.snapshot_path"
             decisions: { from: "$judge-threads.output.decisions", if_skipped: null }
             units: { from: "$judge-ci.output.units", if_skipped: null }

@@ -17,6 +17,8 @@ publish:
   pushed: true
   head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   answered: 0
+  verify_ok: true
+  verify_log_path: ""
 request-review:
   requested: false
   head_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

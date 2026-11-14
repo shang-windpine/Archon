@@ -15,6 +15,7 @@ const defaults: RawDeliverSettings = {
   copilot_wait_min: '30',
   ci_wait_min: '90',
   required_checks: 'build, test',
+  allow_skipped_checks: '',
 };
 
 describe('parseDeliverSettings', () => {
@@ -26,7 +27,11 @@ describe('parseDeliverSettings', () => {
       copilotWaitMin: 30,
       ciWaitMin: 90,
       requiredChecks: ['build', 'test'],
+      allowSkippedChecks: [],
     });
+    expect(
+      parseDeliverSettings({ ...defaults, allow_skipped_checks: 'docs, it' }).allowSkippedChecks
+    ).toEqual(['docs', 'it']);
   });
   test('each bad value names its setting', () => {
     expect(() => parseDeliverSettings({ ...defaults, copilot_mode: 'always' })).toThrow(

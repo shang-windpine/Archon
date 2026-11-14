@@ -81,6 +81,7 @@ function inputs(head: string, extra: Record<string, string> = {}): Record<string
     copilot_wait_min: '30',
     ci_wait_min: '90',
     required_checks: '',
+    allow_skipped_checks: '',
     ...extra,
   };
 }
@@ -167,6 +168,29 @@ describe('await', () => {
     expect(run.output()).toMatchObject({ copilot: 'off', checks: 'green', red_units: 0 });
     expect(run.requests.filter(r => r.op === 'checks.state')).toHaveLength(2);
     expect(run.requests.some(r => r.op === 'pr.reviews')).toBe(false);
+  });
+
+  test('passes allow_skipped_checks to the checks summary', () => {
+    const { checkout, head } = gitCheckout(harness.root());
+    const skipped: CheckUnit = {
+      ...unit('docs', 'green'),
+      nativeResult: 'skipped',
+      result: 'skipped',
+      rerun: null,
+    };
+    const runWith = (allow: string) =>
+      harness.run('await', {
+        cwd: checkout,
+        inputs: inputs(head, { copilot_mode: 'off', allow_skipped_checks: allow }),
+        forge: {
+          'checks.state': [checks(head, [unit('build', 'green'), skipped])],
+          'pr.threads': [{ value: { ref: { repo: REPO, number: 7 }, threads: [] } }],
+        },
+      });
+    const summaryOf = (run: ReturnType<typeof runWith>) =>
+      JSON.parse(readFileSync(String(run.output().snapshot_path), 'utf8')).checks_summary;
+    expect(summaryOf(runWith('docs'))).toMatchObject({ green: true, skipped: [] });
+    expect(summaryOf(runWith(''))).toMatchObject({ green: false, skipped: ['docs'] });
   });
 
   test('waits for a rerun this pack issued to start before reading red as settled', () => {

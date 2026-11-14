@@ -31,24 +31,24 @@ describe('copilotVerdict', () => {
 
 describe('checksVerdict', () => {
   test('settled states map through; a pending rerun keeps waiting', () => {
-    const red = summarizeChecks(snapshot([unit('a', 'red')]), HEAD, []);
+    const red = summarizeChecks(snapshot([unit('a', 'red')]), HEAD, [], []);
     expect(checksVerdict(red, false, 0, 10)).toBe('red');
     expect(checksVerdict(red, true, 0, 10)).toBeNull();
     expect(checksVerdict(red, true, 10, 10)).toBe('pending_timeout');
-    const green = summarizeChecks(snapshot([unit('a', 'green')]), HEAD, []);
+    const green = summarizeChecks(snapshot([unit('a', 'green')]), HEAD, [], []);
     expect(checksVerdict(green, false, 0, 10)).toBe('green');
   });
   test('at the deadline: none on the head is none, a stale or pending one is pending_timeout', () => {
-    expect(checksVerdict(summarizeChecks(snapshot([]), HEAD, []), false, 10, 10)).toBe('none');
-    expect(checksVerdict(summarizeChecks(snapshot([]), HEAD, []), false, 0, 10)).toBeNull();
-    const stale = summarizeChecks(snapshot([unit('a', 'green')], OLD), HEAD, []);
+    expect(checksVerdict(summarizeChecks(snapshot([]), HEAD, [], []), false, 10, 10)).toBe('none');
+    expect(checksVerdict(summarizeChecks(snapshot([]), HEAD, [], []), false, 0, 10)).toBeNull();
+    const stale = summarizeChecks(snapshot([unit('a', 'green')], OLD), HEAD, [], []);
     expect(checksVerdict(stale, false, 0, 10)).toBeNull();
     expect(checksVerdict(stale, false, 10, 10)).toBe('pending_timeout');
-    const pending = summarizeChecks(snapshot([unit('a', 'pending')]), HEAD, []);
+    const pending = summarizeChecks(snapshot([unit('a', 'pending')]), HEAD, [], []);
     expect(checksVerdict(pending, false, 10, 10)).toBe('pending_timeout');
   });
   test('a missing required check is pending, not green', () => {
-    const summary = summarizeChecks(snapshot([unit('a', 'green')]), HEAD, ['build']);
+    const summary = summarizeChecks(snapshot([unit('a', 'green')]), HEAD, ['build'], []);
     expect(checksVerdict(summary, false, 0, 10)).toBeNull();
   });
 });

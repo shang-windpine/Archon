@@ -1,5 +1,5 @@
 /**
- * Runs a devflow-deliver script the way the engine does (`bun --no-env-file --preload
+ * Runs a devflow pack script (devflow-deliver's by default) the way the engine does (`bun --no-env-file --preload
  * <archon:script preload> <script>`), against a fake host CLI that answers forge
  * operations from a per-operation queue and records every request.
  *
@@ -16,7 +16,7 @@ import { trackTempRoots } from '../temp-roots.ts';
 const PRELOAD = join(import.meta.dir, '..', 'archon-script.preload.ts');
 /** The run id every script sees as `runId()`. */
 const RUN_ID = 'run-0000-test';
-const SCRIPTS = join(import.meta.dir, '..', '..', 'pack', 'devflow', 'devflow-deliver', 'scripts');
+const PACK = join(import.meta.dir, '..', '..', 'pack', 'devflow');
 
 /** A forge answer: a result value, or a failure the host reports with `ok: false`. */
 export type FakeAnswer =
@@ -89,8 +89,12 @@ export interface Harness {
   readonly run: (script: string, options?: RunOptions) => ScriptRun;
 }
 
-/** Call once at a test file's module scope: it registers the temp-tree cleanup. */
-export function deliverHarness(): Harness {
+/**
+ * Call once at a test file's module scope: it registers the temp-tree cleanup.
+ * `workflow` names the pack directory whose `scripts/` the runs execute.
+ */
+export function deliverHarness(workflow = 'devflow-deliver'): Harness {
+  const scripts = join(PACK, workflow, 'scripts');
   const track = trackTempRoots();
   const root = (): string => track(mkdtempSync(join(tmpdir(), 'devflow-deliver-test-')));
   return {
@@ -130,7 +134,7 @@ export function deliverHarness(): Harness {
       };
       const result = spawnSync(
         process.execPath,
-        ['--no-env-file', '--preload', PRELOAD, join(SCRIPTS, `${script}.ts`)],
+        ['--no-env-file', '--preload', PRELOAD, join(scripts, `${script}.ts`)],
         { cwd: options.cwd ?? dir, env, encoding: 'utf8' }
       );
       const log = join(dir, 'requests.jsonl');

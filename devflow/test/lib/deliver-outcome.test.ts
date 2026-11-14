@@ -9,9 +9,9 @@ import {
   type ThreadDecision,
   unitKey,
 } from '../../pack/devflow/.shared/lib/deliver-outcome.ts';
-import { HEAD, OLD, snapshot, unit } from './check-fixtures.ts';
+import { HEAD, OLD, skippedUnit, snapshot, unit } from './check-fixtures.ts';
 
-const greenSummary = summarizeChecks(snapshot([unit('build', 'green')]), HEAD, []);
+const greenSummary = summarizeChecks(snapshot([unit('build', 'green')]), HEAD, [], []);
 
 /** A finished round: everything green, Copilot reviewed, nothing open. */
 function facts(overrides: Partial<RoundFacts> = {}): RoundFacts {
@@ -26,6 +26,7 @@ function facts(overrides: Partial<RoundFacts> = {}): RoundFacts {
     conflict: false,
     rerunsIssued: 0,
     rerunHistory: [],
+    localVerifyFailed: false,
     ...overrides,
   };
 }
@@ -44,10 +45,65 @@ const judged = (name: string, cause: CiJudgement['cause']): CiJudgement => ({
 });
 
 function redSummary(...names: string[]) {
-  return summarizeChecks(snapshot(names.map(name => unit(name, 'red'))), HEAD, []);
+  return summarizeChecks(snapshot(names.map(name => unit(name, 'red'))), HEAD, [], []);
 }
 
 describe('computeRoundOutcome', () => {
+  test('green but skipped asks a person once nothing else is pending, and is never done', () => {
+    const summary = summarizeChecks(
+      snapshot([unit('lint', 'green'), skippedUnit('build')]),
+      HEAD,
+      [],
+      []
+    );
+    const outcome = computeRoundOutcome(facts({ summary }));
+    expect(outcome).toMatchObject({ done: false, has_work: false, ask: true });
+    expect(outcome.askReasons).toEqual([
+      'checks skipped on the draft PR: build — CI may not run on drafts; make those jobs run on draft pull requests, or start a new run with allow_skipped_checks listing build',
+    ]);
+  });
+
+  test('a skipped required check is not offered allow_skipped_checks', () => {
+    const summary = summarizeChecks(
+      snapshot([unit('lint', 'green'), skippedUnit('build'), skippedUnit('docs')]),
+      HEAD,
+      ['build'],
+      ['build']
+    );
+    expect(computeRoundOutcome(facts({ summary })).askReasons).toEqual([
+      'checks skipped on the draft PR: build, docs — CI may not run on drafts; make those jobs run on draft pull requests, or start a new run with allow_skipped_checks listing docs; required_checks must really run, so allow_skipped_checks cannot admit build (or remove it from required_checks)',
+    ]);
+    const onlyRequired = summarizeChecks(
+      snapshot([unit('lint', 'green'), skippedUnit('build')]),
+      HEAD,
+      ['build'],
+      []
+    );
+    expect(computeRoundOutcome(facts({ summary: onlyRequired })).askReasons[0]).not.toContain(
+      'start a new run'
+    );
+  });
+
+  test('a skipped unit beside a red one is status, not a second question', () => {
+    const summary = summarizeChecks(
+      snapshot([unit('test', 'red'), skippedUnit('build')]),
+      HEAD,
+      [],
+      []
+    );
+    const outcome = computeRoundOutcome(
+      facts({ checks: 'red', summary, ciJudgement: [judged('test', 'pr_caused')] })
+    );
+    expect(outcome).toMatchObject({ done: false, has_work: true, ask: false });
+    expect(outcome.notes).toContain('skipped check(s) do not count as passed: build');
+  });
+
+  test('a failed local verify is work for the next round and asks', () => {
+    const outcome = computeRoundOutcome(facts({ localVerifyFailed: true }));
+    expect(outcome).toMatchObject({ done: false, has_work: true, ask: true });
+    expect(outcome.notes).toContain('local_verify_cmd failed on the pushed head');
+  });
+
   test('all clear is done, with no work and no ask', () => {
     expect(computeRoundOutcome(facts())).toEqual({
       done: true,
@@ -95,12 +151,12 @@ describe('computeRoundOutcome', () => {
     ['no checks snapshot', { summary: null }, { has_work: false, ask: true }],
     [
       'stale snapshot reported green (no progress)',
-      { summary: summarizeChecks(snapshot([unit('build', 'green')], OLD), HEAD, []) },
+      { summary: summarizeChecks(snapshot([unit('build', 'green')], OLD), HEAD, [], []) },
       { has_work: false, ask: true },
     ],
     [
       'required check missing (no progress)',
-      { summary: summarizeChecks(snapshot([unit('build', 'green')]), HEAD, ['sonar']) },
+      { summary: summarizeChecks(snapshot([unit('build', 'green')]), HEAD, ['sonar'], []) },
       { has_work: false, ask: true },
     ],
     [

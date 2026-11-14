@@ -9,16 +9,18 @@
  *   settled by reading the checks back, never by repeating it. Reruns are recorded in
  *   `$ARTIFACTS_DIR/reruns.json` with the unit id they replaced, which await uses to
  *   tell a started rerun from the old result.
- * - `pr_caused` failures, accepted threads and a base conflict become `next-work.md`
- *   (and the accepted thread ids `next-threads.json`), which control turns into the
- *   next work order.
+ * - `pr_caused` failures, accepted threads, a base conflict and a failed
+ *   `local_verify_cmd` (publish pushed anyway) become `next-work.md` (and the accepted
+ *   thread ids `next-threads.json`), which control turns into the next work order. A
+ *   failed local verify also asks: nothing judged whether the code or the machine fails.
  * - done / has_work / ask come from computeRoundOutcome. When the round asks,
  *   `escalation.md` says what a person must decide, apart from the round's status, and
  *   what each escalate option does; the engine prints the answer commands when the run
  *   pauses. The summary leads with what needs the person.
  *
- * Bound inputs: key, base (preflight), round (control), pr_number, pr_url (publish),
- * snapshot_path (await), decisions, units (the judges' outputs; `null` when skipped).
+ * Bound inputs: key, base (preflight), round (control), pr_url, local_verify_ok,
+ * local_verify_log (publish), snapshot_path (await), decisions, units (the judges'
+ * outputs; `null` when skipped).
  */
 
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -38,6 +40,7 @@ import {
   fence,
   hasNextWork,
   reconcileDecisions,
+  ROUND_FILES,
   renderNextWork,
 } from '../../.shared/lib/deliver-work.ts';
 import { artifactPath, validateKey } from '../../.shared/lib/devflow.ts';
@@ -231,6 +234,10 @@ try {
     (nullableJson(input('decisions')) as ThreadDecision[] | null) ?? []
   );
   const judgements = (nullableJson(input('units')) as CiJudgement[] | null) ?? [];
+  const localVerifyOk = input('local_verify_ok');
+  if (localVerifyOk !== 'true' && localVerifyOk !== 'false')
+    throw new Error(`local_verify_ok is not a boolean: ${JSON.stringify(localVerifyOk)}`);
+  const localVerifyFailed = localVerifyOk === 'false';
 
   const replied = postReplies(ref, reconciled.decisions);
 
@@ -258,6 +265,7 @@ try {
     conflict: snapshot.conflict,
     rerunsIssued: issued.length,
     rerunHistory: history,
+    localVerifyFailed,
   });
 
   const byId = new Map(snapshot.threads.map(thread => [thread.id, thread]));
@@ -275,9 +283,10 @@ try {
     conflictBase: snapshot.conflict
       ? { branch: input('base'), revision: snapshot.base_revision }
       : null,
+    localVerifyLog: localVerifyFailed ? input('local_verify_log') || null : null,
   };
-  const nextWorkPath = artifactPath('next-work.md');
-  const nextThreadsPath = artifactPath('next-threads.json');
+  const nextWorkPath = artifactPath(ROUND_FILES.nextWork);
+  const nextThreadsPath = artifactPath(ROUND_FILES.nextThreads);
   if (outcome.has_work && hasNextWork(work)) {
     writeFileSync(nextWorkPath, renderNextWork(work));
     writeFileSync(
@@ -299,7 +308,7 @@ try {
     ...outcome.notes,
     ...(replied > 0 ? [`declined and resolved ${String(replied)} thread(s)`] : []),
   ];
-  const reportPath = artifactPath('escalation.md');
+  const reportPath = artifactPath(ROUND_FILES.escalation);
   if (outcome.ask) {
     writeFileSync(
       reportPath,

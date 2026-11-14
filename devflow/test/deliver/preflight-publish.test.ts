@@ -18,6 +18,7 @@ const SETTINGS = {
   copilot_wait_min: '30',
   ci_wait_min: '90',
   required_checks: '',
+  allow_skipped_checks: '',
 };
 
 function prRecord(number: number, head: string, revision: string, draft = true) {
@@ -97,9 +98,12 @@ describe('preflight', () => {
       pr_number: 0,
     });
     expect(run.requests.map(r => r.op)).toEqual(['check', 'resolve', 'pr.view', 'pr.view']);
-    const order = readFileSync(join(run.artifacts, 'work-order.md'), 'utf8');
+    // Round 1's pristine copies; control puts them in place at every round 1.
+    const order = readFileSync(join(run.artifacts, 'work-order.round1.md'), 'utf8');
     expect(order).toContain('round 1');
     expect(order).toContain('followup-work.md');
+    expect(readFileSync(join(run.artifacts, 'work-threads.round1.json'), 'utf8')).toBe('[]\n');
+    expect(existsSync(join(run.artifacts, 'work-order.md'))).toBe(false);
     expect(readFileSync(join(run.artifacts, 'base-revision.txt'), 'utf8').trim()).toBe(base);
   });
 
@@ -161,6 +165,8 @@ describe('publish', () => {
       pushed: true,
       head_revision: head,
       answered: 1,
+      verify_ok: true,
+      verify_log_path: '',
     });
     const create = run.requests.find(r => r.op === 'pr.create')?.request;
     expect(create).toMatchObject({
@@ -204,5 +210,36 @@ describe('publish', () => {
     expect(run.stderr).toContain('checkstyle_cmd still fails on HEAD');
     expect(run.requests).toHaveLength(0);
     expect(existsSync(join(run.artifacts, 'checkstyle-final.log'))).toBe(true);
+  });
+
+  test('a failing local verify is pushed and reported, not refused', () => {
+    const { checkout, head } = gitCheckout(harness.root());
+    const run = harness.run('publish', {
+      cwd: checkout,
+      inputs: {
+        key: 'ABC-1',
+        repo: JSON.stringify(REPO),
+        base: 'main',
+        head: 'feature/ABC-1',
+        pr_number: '9',
+        checks_ok: 'false',
+        checkstyle_cmd: 'true',
+        local_verify_cmd: 'echo GreeterTest failed; exit 1',
+        threads: 'null',
+      },
+      forge: {
+        'pr.view': [{ value: { pr: prRecord(9, 'feature/ABC-1', head) } }],
+      },
+    });
+    expect(run.stderr).toBe('');
+    expect(run.status).toBe(0);
+    const verifyLog = join(run.artifacts, 'local-verify-final.log');
+    expect(run.output()).toMatchObject({
+      pushed: true,
+      head_revision: head,
+      verify_ok: false,
+      verify_log_path: verifyLog,
+    });
+    expect(readFileSync(verifyLog, 'utf8')).toContain('GreeterTest failed');
   });
 });

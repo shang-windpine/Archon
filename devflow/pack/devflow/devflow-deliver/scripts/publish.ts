@@ -4,8 +4,12 @@
  * review threads implement fixed.
  *
  * When the round's first local gate failed, both commands run again here on the final
- * HEAD (fix-style may have changed it) and a red result refuses: the run stops for a
- * person rather than pushing code the project's own checks reject.
+ * HEAD (fix-style may have changed it). Checkstyle still red refuses: fix-style already
+ * had its tries, and the run stops for a person rather than pushing code that fails the
+ * project's style gate. A failing `local_verify_cmd` does not refuse: it has no fixer
+ * in this round, and refusing would end the run on a failure an implement round can
+ * fix (or a person can explain). The head is pushed, `verify_ok: false` names the log,
+ * and act hands the failure to the next round and asks a person (DESIGN §6).
  *
  * A fixed thread gets `Fixed in <sha>: <note>` and is resolved, but only a thread this
  * round's work order handed implement (`work-threads.json`). implement's `not_fixed`
@@ -18,7 +22,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { emit, forge, input, refuse } from 'archon:script';
 import { artifactPath, runCommand, validateKey } from '../../.shared/lib/devflow.ts';
-import { fixedReplies, type ImplementThread } from '../../.shared/lib/deliver-work.ts';
+import { fixedReplies, type ImplementThread, WORK_FILES } from '../../.shared/lib/deliver-work.ts';
 import { git, gitOrThrow } from '../../.shared/lib/git.ts';
 import { nullableJson } from '../../.shared/lib/inputs.ts';
 import type { PrRecord, Repo } from '../../.shared/lib/identity.ts';
@@ -28,34 +32,36 @@ import { fetchBranch, remoteFor } from '../../.shared/lib/remote.ts';
 
 const COMMAND_TIMEOUT_MS = 20 * 60_000;
 
-async function recheckLocalGate(): Promise<void> {
-  const commands = [
-    {
-      name: 'checkstyle_cmd',
-      command: input('checkstyle_cmd').trim(),
-      log: 'checkstyle-final.log',
-    },
-    {
-      name: 'local_verify_cmd',
-      command: input('local_verify_cmd').trim(),
-      log: 'local-verify-final.log',
-    },
-  ];
-  for (const { name, command, log } of commands) {
-    if (command === '') continue;
-    const logPath = artifactPath(log);
-    const result = await runCommand(command, {
-      cwd: process.cwd(),
-      timeoutMs: COMMAND_TIMEOUT_MS,
-      logPath,
-    });
-    if (result.code !== 0) {
-      throw new Error(
-        `${name} still fails on HEAD after fix-style (${result.timedOut ? 'timed out' : `exit ${String(result.code)}`}); ` +
-          `see ${logPath}. Fix it on the branch, commit, then rerun devflow-deliver on the same --branch`
-      );
-    }
+interface LocalVerify {
+  readonly ok: boolean;
+  /** The failing run's log; empty when it passed or is not configured. */
+  readonly logPath: string;
+}
+
+/** Re-runs the local gate on the final HEAD: refuses on checkstyle, reports local verify. */
+async function recheckLocalGate(): Promise<LocalVerify> {
+  const style = input('checkstyle_cmd').trim();
+  const styleLog = artifactPath('checkstyle-final.log');
+  const styleRun = await runCommand(style, {
+    cwd: process.cwd(),
+    timeoutMs: COMMAND_TIMEOUT_MS,
+    logPath: styleLog,
+  });
+  if (styleRun.code !== 0) {
+    throw new Error(
+      `checkstyle_cmd still fails on HEAD after fix-style (${styleRun.timedOut ? 'timed out' : `exit ${String(styleRun.code)}`}); ` +
+        `see ${styleLog}. Fix it on the branch, commit, then rerun devflow-deliver on the same --branch`
+    );
   }
+  const verify = input('local_verify_cmd').trim();
+  if (verify === '') return { ok: true, logPath: '' };
+  const verifyLog = artifactPath('local-verify-final.log');
+  const verifyRun = await runCommand(verify, {
+    cwd: process.cwd(),
+    timeoutMs: COMMAND_TIMEOUT_MS,
+    logPath: verifyLog,
+  });
+  return verifyRun.code === 0 ? { ok: true, logPath: '' } : { ok: false, logPath: verifyLog };
 }
 
 function prTitle(key: string): string {
@@ -79,7 +85,7 @@ function readJsonArray(path: string): unknown[] {
 
 function answerFixedThreads(pr: PrRecord, revision: string): number {
   const reported = (nullableJson(input('threads')) as ImplementThread[] | null) ?? [];
-  const workThreads = readJsonArray(artifactPath('work-threads.json')).filter(
+  const workThreads = readJsonArray(artifactPath(WORK_FILES.current.threads)).filter(
     (id): id is string => typeof id === 'string'
   );
   const notesPath = artifactPath('thread-notes.json');
@@ -116,7 +122,8 @@ try {
   const repo = nullableJson(input('repo')) as Repo;
   const base = input('base');
   const head = input('head');
-  if (input('checks_ok') !== 'true') await recheckLocalGate();
+  const verify: LocalVerify =
+    input('checks_ok') === 'true' ? { ok: true, logPath: '' } : await recheckLocalGate();
 
   const known = Number(input('pr_number') || '0');
   const existing = known > 0 ? viewPr({ repo, number: known }) : findOpenPrByHead(repo, head);
@@ -157,6 +164,8 @@ try {
     pushed: before !== revision,
     head_revision: revision,
     answered,
+    verify_ok: verify.ok,
+    verify_log_path: verify.logPath,
   });
 } catch (error) {
   refuse(`publish: ${error instanceof Error ? error.message : String(error)}`);

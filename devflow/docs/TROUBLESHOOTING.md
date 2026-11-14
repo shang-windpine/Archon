@@ -157,11 +157,12 @@ ls -la "$STATE"                                      # 跨 run 的状态目录
 | `requirement.md` | preflight（从状态目录复制） | 这次 run 按哪一版需求做？ |
 | `followup-work.md` | preflight（有未消费的 verify 失败清单时复制） | 第 1 轮是否带着人工测试发现的问题？ |
 | `base-revision.txt` | preflight、await | 与哪个 base commit 比较（conflict 检查、`git diff`）？ |
-| `work-order.md` | preflight（第 1 轮）、control（后续轮次） | **本轮 implement 被要求做什么？** 包括已接受的 thread、本 PR 造成的 CI 失败、base 冲突、人的回答。只有选项没有 text 且无工作时，内容是 `No code work this round.` |
-| `work-threads.json` | preflight / control | 本轮交给 implement 的 thread id 列表（JSON 数组）。publish 只回复和 resolve 这里列出的 thread |
+| `work-order.round1.md` / `work-threads.round1.json` | preflight | 第 1 轮工单的原件。每个第 1 轮（包括失败 resume 后从第 1 轮重跑时）control 都把它们复制成 `work-order.md` / `work-threads.json` |
+| `work-order.md` | control | **本轮 implement 被要求做什么？** 包括已接受的 thread、本 PR 造成的 CI 失败、base 冲突、`local_verify_cmd` 失败、人的回答。只有选项没有 text 且无工作时，内容是 `No code work this round.` |
+| `work-threads.json` | control | 本轮交给 implement 的 thread id 列表（JSON 数组）。publish 只回复和 resolve 这里列出的 thread |
 | `checkstyle.log` | checkstyle 节点、fix-style 的 until_bash | **最近一次** checkstyle 的完整输出：fix-style 每修一次都会重跑 `checkstyle_cmd` 并覆盖它。本轮第一次的结果在 fix-style 之后就看不到了 |
 | `local-verify.log` | checkstyle 节点（`local_verify_cmd` 非空时） | `local_verify_cmd` 的输出 |
-| `checkstyle-final.log` / `local-verify-final.log` | publish（第一次本地检查失败时，在最终 HEAD 上重跑） | **publish 为什么拒绝 push？** |
+| `checkstyle-final.log` / `local-verify-final.log` | publish（第一次本地检查失败时，在最终 HEAD 上重跑） | `checkstyle-final.log`：**publish 为什么拒绝 push？** `local-verify-final.log`：推上去的 head 上 `local_verify_cmd` 为什么失败（publish 不因它拒绝，act 把它交给下一轮并问人） |
 | `pr-title.txt` / `pr-body.md` | pr-text（PR 还不存在时） | 新 PR 的标题和正文 |
 | `thread-notes.json` | publish | implement 报告 `not_fixed` 的 thread 及原因（`{thread_id: note}`），下一轮 judge 读它，避免反复接受同一个 thread |
 | `copilot-request.log` | request-review | `copilot_request_cmd` 的输出。gh 报错、权限问题都在这里 |
@@ -172,7 +173,7 @@ ls -la "$STATE"                                      # 跨 run 的状态目录
 | `snapshot.json` | await | **本轮观察到的全部事实**（字段见 2.3） |
 | `ci-logs/<name>.log` | await | 每个红色 check 的日志（最多约 400 KB，截断时 snapshot 的 `red_units[].note` 会说明）。**每轮覆盖**，只剩最近一轮的；旧轮次的日志去 GitHub 的 Actions 页面看。文件名是 check 名清洗后的结果（例如 `build (17)` → `build_17_.log`），以 `snapshot.json` 的 `red_units[].log_path` 为准 |
 | `reruns.json` | act | pack 发出过的 rerun `[{head, unit, at, id}]`。`unit` 是 `<kind>:<name>`，`id` 是 rerun 前的 unit id（GitHub 的 check-run/job id，**不是** Actions 的 workflow run id）。同一 head 同一 unit 只 rerun 一次 |
-| `next-work.md` / `next-threads.json` | act（有工作留给下一轮时） | 下一轮要做什么。**本轮没有工作时会被删除**，所以"文件不存在"本身就是信息 |
+| `next-work.md` / `next-threads.json` | act（有工作留给下一轮时） | 下一轮要做什么。**本轮没有工作时会被删除**，所以"文件不存在"本身就是信息。每个第 1 轮的 control 也会删掉它们（连同 `escalation.md`），因为那是上一次尝试留下的 |
 | `escalation.md` | act（`ask=true` 时） | **为什么停下来问人**。分两节：`Needs your decision`（需要人决定的）和 `Status this round`（状态），后面列出需要人判断的 thread 和原因未知的 CI 失败。不问人时会被删除 |
 | `human-answers.md` | control | 本 run 内人对每次 escalation 的回答（追加式）。judge-threads 和 judge-ci 都读它，并把它当作权威 |
 | `change-summary.md` | summarize | 改动摘要，finish 会复制到状态目录 |
@@ -201,7 +202,7 @@ jq '{copilot, checks, request_error, conflict, head_revision, missing: .checks_s
 | `request_error` | request-review 的错误说明，`request_failed` 时看它 |
 | `copilot_review` | Copilot 对该 head 的 review：`{id, url, state, created_at, body}`；没有则 `null` |
 | `checks` | `green` / `red` / `pending_timeout`（等满 `ci_wait_min` 仍未稳定）/ `none`（该 head 上一个 check 都没有）/ `gated`（在等 approval）/ `unknown` |
-| `checks_summary` | pack 的汇总：`state`、`stale`（观察到的不是当前 head）、`redUnits`、`missingRequired`（`required_checks` 里没出现的名字）、`settled`、`green` |
+| `checks_summary` | pack 的汇总：`state`、`stale`（观察到的不是当前 head）、`redUnits`、`missingRequired`（`required_checks` 里没出现的名字）、`skipped`（同名 unit 全部结论为 skipped、又不被 `allow_skipped_checks` 允许的 check 名，非空时不算绿）、`skippedRequired`（其中属于 `required_checks` 的名字，`allow_skipped_checks` 对它们无效）、`settled`、`green` |
 | `checks_state` | forge 原始观察：`units[]`（每个有 `unit: {kind, id, name}`、`state`、`result`、`rerun`），`summary.counts`，`revision`，`approvalPending`。`required` 恒为 `null`（GitHub 插件不读分支保护） |
 | `threads` | 所有**未 resolve** 的 review thread：`id`、`outdated`、`path`、`line`、`url`、`comments[{author, body, url}]` |
 | `red_units` | `{name, kind, log_path, note}`，`log_path` 指向 `ci-logs/` |
@@ -232,7 +233,7 @@ jq '{copilot, checks, request_error, conflict, head_revision, missing: .checks_s
 | `plan-review.md` | 第二视角对计划的评审 |
 | `verify-plan.md` | 合并后的计划（状态目录里也有一份） |
 
-**`verify-results.md`、`verify-report.md`、`followup-work.md` 不在 run artifacts 里**，只在状态目录（§2.7）。triage 的结论（`all_passed`、`failed`、`blocked`、`not_run`、`followup_written`）在节点输出里，读法见 §2.8。状态目录里的报告不带 run id，下一次 verify 会把它挪进 `verify.history/<时间戳>/`；对应关系见 [OPERATIONS.md](OPERATIONS.md) §4.5。
+**`verify-results.md`、`verify-report.md`、`followup-work.md` 不在 run artifacts 里**，只在状态目录（§2.7）。triage 的结论（`all_passed`、`failed`、`blocked`、`not_run`、`followup_written`）在节点输出里，读法见 §2.8。状态目录里的报告不带 run id，下一次 verify 会把计划、结果、报告挪进 `verify.history/<时间戳>/`（还没被 deliver 用过的 `followup-work.md` 留在原处）；对应关系见 [OPERATIONS.md](OPERATIONS.md) §4.5。
 
 ### 2.6 devflow-smoke 的 artifacts
 
@@ -254,7 +255,7 @@ jq '{copilot, checks, request_error, conflict, head_revision, missing: .checks_s
 | `verify-plan.md` / `verify-results.md` / `verify-report.md` | verify | 测试计划、人填写的结果、triage 报告 |
 | `followup-work.md` | verify.triage（有失败时） | 下次 deliver 第 1 轮要修的问题 |
 | `followup-work.consumed-<时间戳>.md` | deliver.finish | 已被一次 deliver 消费的 follow-up |
-| `verify.history/<时间戳>/` | verify.context | 上一次 verify 的计划、结果、报告、follow-up |
+| `verify.history/<时间戳>/` | verify.context | 上一次 verify 的计划、结果、报告（旧版本 pack 也会把 follow-up 移进来；现在未消费的 follow-up 留在原处） |
 
 ### 2.8 读节点输出、实际用的模型和冻结的设置
 
@@ -319,11 +320,11 @@ ERROR [model] Node 'review': Unknown alias '@devflow-cross'. Defined aliases: sm
 
 ```bash
 archon ai alias list
-archon ai alias set @devflow-cross pi <pi-provider>/<model-id>    # @devflow-cross 只能是 pi，不能是 claude
+archon ai alias set @devflow-cross pi <pi-provider>/<model-id>    # 推荐：另一家厂商的模型
 archon validate workflows
 ```
 
-`@devflow-cross` 不能配成 claude：refine 的 review 会继承 draft 的会话（[HANDOFF.md](HANDOFF.md) §2.2、§8.1 第 1 条）。另外三个 alias 用 claude。
+`@devflow-cross` 推荐配成 Pi 接另一家厂商的模型（DESIGN §4）。没有 Pi 时可以用 `claude sonnet`：评审节点都写了 `context: fresh`，不会继承 draft 的会话（[HANDOFF.md](HANDOFF.md) §2.2），只是同厂商评审自己的产出，`doctor.sh` 会给 WARN。另外三个 alias 用 claude。
 
 模板见 [../templates/archon-home-config.yaml](../templates/archon-home-config.yaml)，配置步骤见 [SETUP.md](SETUP.md)。
 
@@ -434,9 +435,9 @@ ls ~/.pi/agent/                         # 应有 auth.json（pi /login 写的）
 
 自定义网关的 key 写在 `~/.archon/.env`，在 `~/.pi/agent/models.json` 里用 `"$VAR"` 引用（模板见 [../templates/pi-models.example.json](../templates/pi-models.example.json)）。改完后跑 `archon workflow run devflow-smoke`，`ai-cross` 一行应为 PASS。
 
-注意：`archon doctor` 有一行 `pi: Pi backend credentials: ...`，Pi 没有可用凭据时它只是警告，不算失败；它也不会按 `@devflow-cross` 的具体模型 ref 去验证。ref 写错（`Pi model not found`）只有 `pi auth check --model <ref>` 和 devflow-smoke 的 `ai-cross` 一行能发现。
+注意：`archon doctor` 有一行 `pi: Pi backend credentials: ...`，Pi 没有可用凭据时它只是警告，不算失败；它也不会按 `@devflow-cross` 的具体模型 ref 去验证。ref 写错（`Pi model not found`）由 `devflow/scripts/doctor.sh` 的 `<role> model` 行（每个解析到 Pi 的 alias 一行，例如 `cross model`；用 `pi --list-models` 精确核对 provider 和 model 两列）、`pi auth check --model <ref>` 和 devflow-smoke 的 `ai-cross` 一行发现。
 
-Pi 的结构化输出是 best-effort，输出不符合 schema 时会重试 3 次，之后节点失败。如果偶发：refine、verify 的 run 可以 `archon workflow resume $RUN --detach`；**deliver 的失败节点在 `rounds.*` 里（judge-threads 就是）时不要 resume**，按 [OPERATIONS.md](OPERATIONS.md) §3.7 abandon 后用同一个 `--branch` 开新 run（resume 会从第 1 轮重跑并读到旧工单，[HANDOFF.md](HANDOFF.md) §8.1 第 2 条）。如果每次都失败，换一个更强的 Pi 模型（改 alias，然后开新 run）。
+Pi 的结构化输出是 best-effort，输出不符合 schema 时会重试 3 次，之后节点失败。如果偶发：`archon workflow resume $RUN --detach`。deliver 的失败节点在 `rounds.*` 里（judge-threads 就是）时，resume 会让循环从第 1 轮重跑（第 1 轮工单会被重写，implement 会再跑一次），见 [OPERATIONS.md](OPERATIONS.md) §3.7 规则 3。如果每次都失败，换一个更强的 Pi 模型（改 alias，然后开新 run）。
 
 #### 3.2.2 Claude 意外按 API 计费
 
@@ -459,7 +460,7 @@ claude auth status --json                                    # 确认是订阅�
 
 | 看到 | 处理 |
 |---|---|
-| Claude 首个事件超时 | 在 `~/.archon/.env` 加 `ARCHON_CLAUDE_FIRST_EVENT_TIMEOUT_MS=120000`。然后：refine/verify `archon workflow resume $RUN --detach`；deliver 失败在 `rounds.*` 里时按 [OPERATIONS.md](OPERATIONS.md) §3.7 开新 run |
+| Claude 首个事件超时 | 在 `~/.archon/.env` 加 `ARCHON_CLAUDE_FIRST_EVENT_TIMEOUT_MS=120000`，然后 `archon workflow resume $RUN --detach`（deliver 失败在 `rounds.*` 里时循环从第 1 轮重跑，见 [OPERATIONS.md](OPERATIONS.md) §3.7 规则 3） |
 | `usage_limit`（provider 配额用尽） | 先 `archon workflow get $RUN` 看状态：仍是 `paused`/`running` 就什么都不用做，配额恢复后会继续；已经是 `failed` 时按 [OPERATIONS.md](OPERATIONS.md) §3.7 的决策树处理 |
 | `~/.archon/config.yaml` 改了但 run 没用上 | run 启动时冻结 AI 配置。开新 run |
 
@@ -524,7 +525,12 @@ preflight 失败时还没有 agent 花钱，也没写远端，而且 preflight �
 
 先看一轮的节点顺序：`control → implement → checkstyle → fix-style → pr-text → publish → request-review → await → judge-threads / judge-ci → act → escalate`。每轮读的工作单在 `work-order.md`，观察结果在 `snapshot.json`，结论在 `escalation.md`（只有要问人时才有）。
 
-**本节所有「节点失败」的情况，修好原因后都不要 `resume`**，而是按 [OPERATIONS.md](OPERATIONS.md) §3.7：在 worktree 里 commit 想留的改动 → `archon workflow abandon $RUN` → 用同一个 `--branch` 开新 run。原因：resume 让 `rounds` 从第 1 轮重跑，第 1 轮会再跑一次 implement（花钱），而且读到的是失败前最后一轮的旧工单（已知 pack 问题，[HANDOFF.md](HANDOFF.md) §8.1 第 2 条）。新 run 的 preflight 会重新生成第 1 轮工单，按 head 分支找到已有 PR。下面把这一串简称为「**abandon 后开新 run**」。
+**本节「节点失败」的情况，修好原因后有两条路**（[OPERATIONS.md](OPERATIONS.md) §3.7）。两条都从第 1 轮、用正确的第 1 轮工单重跑，implement 都会再跑一次（花钱），但它们**不等价**：
+
+- `archon workflow resume $RUN --detach`（只在没改 pack 和 settings 时可用）：保留本 run 的 `reruns.json`、`copilot-requests.json`、`human-answers.md`、`copilot-skipped`、`thread-notes.json`，所以同一 head 不会重复 rerun 或重复请求 Copilot，你之前选的 `skip-copilot` 和给 judge 的回答仍然有效。代价：第 1 轮的 PR 编号来自 preflight 当时的结果，失败前才建的 PR 在这里是 0，`pr-text` 会多跑一次（publish 仍按 head 分支找到已有 PR，不会重复建）。
+- 在 worktree 里 commit 想留的改动 → `archon workflow abandon $RUN` → 用同一个 `--branch` 开新 run：新 run 的 artifacts 是空的，上面那些文件都没有了。会对同一 head 再请求一次 Copilot、再 rerun 一次已经 rerun 过的 check；之前的 `skip-copilot` 要重新选（或开 run 时加 `--input copilot_mode=off`），给 judge 的回答要在新 run 的 escalate 里重新给。preflight 会按 head 分支找到已有 PR。**改了 settings 或 pack 时只能走这条**（resume 用冻结的旧值）。
+
+下面把第二条简称为「**abandon 后开新 run**」。
 
 #### 3.5.1 checkstyle 一直失败（publish 拒绝）
 
@@ -534,11 +540,9 @@ preflight 失败时还没有 agent 花钱，也没写远端，而且 preflight �
 publish: checkstyle_cmd still fails on HEAD after fix-style (exit 1); see <artifacts>/checkstyle-final.log. Fix it on the branch, commit, then rerun devflow-deliver on the same --branch
 ```
 
-（`local_verify_cmd` 失败时，前缀换成 `local_verify_cmd still fails ...`，日志是 `local-verify-final.log`。）
-
 原因：fix-style 最多修 3 次仍未通过；或者命令本身在这个仓库里永远失败（插件没配置、多模块需要 `-pl`、Maven 离线拿不到插件、用了 `mvn` 但仓库要求 `./mvnw`）。
 
-注意：`fix-style` 只修 checkstyle，`local_verify_cmd` 失败时没有 agent 修复步骤，publish 会直接拒绝。
+注意：`fix-style` 只修 checkstyle。`local_verify_cmd` 失败**不会**让 publish 拒绝，见 3.5.1a。
 
 处理：
 
@@ -551,9 +555,24 @@ mvn -B -q checkstyle:check; echo "exit=$?"     # 换成你的 checkstyle_cmd，�
 
 - 是代码违规：人在 worktree 里修好、`git commit`（不要 push，下一次 publish 会 push），确认 `git status` 干净，然后 **abandon 后开新 run**：`archon workflow abandon $RUN`，再 `archon workflow run devflow-deliver --branch <branch> --input key=$KEY --detach --json`。abandon 会删 worktree，但提交在分支上，新 run 会在原分支上重建 worktree。这也是 publish 报错文案里「rerun devflow-deliver on the same --branch」的意思。
 - 是命令本身不对：改 `.archon/packs/devflow.yaml` 的 `checkstyle_cmd`，手工确认它在干净代码上退出 0，然后 abandon 后开新 run，并用 `--input` 带上新命令（`--input` 最可靠，不依赖 worktree 里那份 settings 副本是否已更新，见 3.7.6）：`archon workflow run devflow-deliver --branch <branch> --input key=$KEY --input checkstyle_cmd='<新命令>' --detach --json`。
-- `local_verify_cmd` 失败同理。它没有 agent 修复步骤（`fix-style` 只修 checkstyle），只能人修，或者把 `local_verify_cmd` 改成稳定的命令或留空。
 
 为什么不能把 checkstyle 节点改成"失败就让节点失败"：checkstyle 节点必须以退出码 0 结束并输出 `ok: false`，否则 fix-style 根本没机会运行。
+
+#### 3.5.1a `local_verify_cmd` 失败（run 停在 escalate）
+
+看到：escalate 暂停，summary 以 `needs you: local_verify_cmd failed on the pushed head; the next round fixes it ...` 开头；`next-work.md` 有 `## The local verify command fails` 一节。
+
+原因：publish 在最终 HEAD 上重跑 `local_verify_cmd` 仍失败。它在本轮没有修复者（`fix-style` 只修 checkstyle），所以 publish 照常 push（日志 `local-verify-final.log`），act 把失败作为下一轮 implement 的工作，同时问你：没有 judge 判断这是代码问题还是机器/环境问题。
+
+处理：
+
+```bash
+D=$(archon workflow artifacts $RUN --json | jq -r .artifactsDir)
+tail -50 "$D/local-verify-final.log"
+```
+
+- 是代码问题：回答 `continue`（text 可空），下一轮 implement 按日志修。
+- 是环境问题（端口被占、本机缺依赖、命令不稳定）：**不要回答 `continue`**。设置在 run 启动时就冻结了，每轮都会跑同一条命令、再失败一次；每次失败既算下一轮的工作又会问你，而 `done` 要求没有工作，所以这个 run 只会每轮跑一次 implement（花钱）、问你一次，直到轮数用完。直接在 worktree 里 commit 想留的改动 → `archon workflow abandon $RUN` → 用同一个 `--branch` 开新 run，加 `--input local_verify_cmd='<稳定的命令>'` 或 `--input local_verify_cmd=''`；长期修改写进 `.archon/packs/devflow.yaml`（注意 OPERATIONS §3.7 规则 4：已存在的 worktree 里是旧副本）。
 
 #### 3.5.2 push 被拒（远端分支被别人动过）
 
@@ -733,6 +752,22 @@ gh pr checks <N> --repo <owner>/<repo> --required     # 分支保护要求的 ch
 
 把 `required_checks` 改成 `seen` 里出现的确切名字（逗号分隔，不能有空项），开新 run 生效。本次 run 可回答 `continue` 再等一轮（名字仍对不上的话还会超时）。
 
+#### 3.5.9a checks 在 draft PR 上被跳过（`checks skipped on the draft PR`）
+
+看到：escalate 暂停，summary 含 `checks skipped on the draft PR: <names> — CI may not run on drafts; ...`；或 Status 一节有 `skipped check(s) do not count as passed: <names>`。
+
+原因：forge 把结论为 `skipped` 的 check 映射为 green，但 devflow 的 PR 始终是 draft，写了 `if: !github.event.pull_request.draft` 之类条件的 job 在 draft 上总是 skipped，CI 实际没跑。所以 pack 把不在 `allow_skipped_checks` 里的 skipped check 当作「不绿」：等待改变不了 skipped，agent 也修不了，于是在 checks 其余都绿、没有别的工作时问你。required check 被跳过永远不算通过。
+
+处理：
+
+```bash
+D=$(archon workflow artifacts $RUN --json | jq -r .artifactsDir)
+jq '{skipped: .checks_summary.skipped, results: [.checks_state.units[] | {name: .unit.name, result}]}' "$D/snapshot.json"
+```
+
+- 这些 job 应该在 draft 上跑：请 CI 负责人去掉 draft 条件（[SETUP.md](SETUP.md) §8.1），然后回答 `continue`（下一轮会再等 checks；同一 head 上 job 不会自己重跑，可能需要推新 commit 或在 GitHub 上手工 rerun）。
+- 这些 job 本来就允许跳过（例如只在 main 上跑的发布 job）：把名字写进 `.archon/packs/devflow.yaml` 的 `allow_skipped_checks`，开新 run（或 `--input allow_skipped_checks=<names>`）。本 run 用的是冻结的设置，回答 `continue` 只会再问一次。
+
 #### 3.5.10 rerun 没有开始
 
 背景：judge-ci 把红色 check 判为 `infra` 或 `flaky`，且该 check 可以 rerun 时，act 会对**当前 head 的每个 unit 只 rerun 一次**，记录在 `reruns.json`。下一轮 await 会一直等到该 unit 的 id 变化（GitHub 给 rerun 分配新 id）才认为 rerun 已开始。
@@ -884,7 +919,7 @@ archon workflow wait $RUN --json --timeout 30
 处理：
 
 1. `archon workflow resume $RUN` 会拒绝 running 状态的 run，这是预期的，不要反复试。
-2. **deliver**：先确认 worktree 里没有要保留的未提交改动（`git -C $WS/worktrees/<branch> status`；有就先 commit，不要 push），然后 `archon workflow abandon $RUN`，再在同一分支上开新 run（`--branch <branch> --input key=$KEY --detach --json`）。已 push 和已 commit 的内容都在分支上，新 run 会找到已有 PR。不要用下面第 3 条的 `--resume`：它和 resume 一样会让 `rounds` 从第 1 轮重跑并读到旧工单（[HANDOFF.md](HANDOFF.md) §8.1 第 2 条）。
+2. **deliver**：先确认 worktree 里没有要保留的未提交改动（`git -C $WS/worktrees/<branch> status`；有就先 commit，不要 push），然后 `archon workflow abandon $RUN`，再在同一分支上开新 run（`--branch <branch> --input key=$KEY --detach --json`）。已 push 和已 commit 的内容都在分支上，新 run 会找到已有 PR。这里推荐 abandon 而不是下面第 3 条的 `--resume`：`--resume` 要在 run 记录的工作路径（worktree）下执行、只选中超过 1 天没动的 run，而且同样让 `rounds` 从第 1 轮重跑，abandon 后开新 run 更直接。
 3. **refine / verify**：可以按名字续跑。`workflow run <name> --resume` 只会选中最后活动时间超过 1 天（或没有记录）的 running run，而且必须在 run 记录的工作路径下执行，refine 和 verify 的工作路径是 Java 仓库本身：
    ```bash
    cd "$REPO_DIR" && archon workflow run devflow-refine --resume     # 或 devflow-verify

@@ -46,6 +46,8 @@ nodes:
         results_path: { type: string }
         report_path: { type: string }
         followup_path: { type: string }
+        # Empty, or a sentence for the person: an undelivered followup-work.md is still there.
+        followup_notice: { type: string }
         files_source: { type: string, enum: [forge, git, none] }
         changed_files: { type: integer }
         warnings: { type: integer }
@@ -61,6 +63,7 @@ nodes:
         - results_path
         - report_path
         - followup_path
+        - followup_notice
         - files_source
         - changed_files
         - warnings
@@ -126,11 +129,14 @@ nodes:
     output_format: *plan_output
 
   # Runs with no side plan too: it then checks the "nothing to test by hand" claim.
+  # context: fresh — the reviewer never inherits a planner's session, whatever provider
+  # the aliases resolve to (DESIGN §4).
   - id: plan-review
     depends_on: [classify, plan-ui, plan-api]
     trigger_rule: none_failed_min_one_success
     command: plan-review
     model: "@devflow-cross"
+    context: fresh
     mutates_checkout: false
     with:
       context_path: $context.output.context_path
@@ -188,6 +194,7 @@ nodes:
 
         Test plan: $assemble.output.plan_path
         Results file: $assemble.output.results_path
+        $context.output.followup_notice
 
         Start, build and configure the services and the environment yourself; the plan does
         not cover that, and its preconditions are only the test data to prepare. Run the

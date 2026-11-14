@@ -5,10 +5,12 @@
  *
  * Copilot counts as done only for a review whose commit is the head and whose author is
  * one of `copilot_logins`; with the `$ARTIFACTS_DIR/copilot-skipped` marker control
- * writes for a `skip-copilot` answer, `copilot_mode` is `off`. Checks count as settled only for an observation of the head
- * with no unit pending (summarizeChecks), and not while a rerun this pack issued on the
- * head has not visibly started. Both deadlines (`copilot_wait_min`, `ci_wait_min`, at
- * most 140 minutes, checked by preflight) end before the node's 150-minute timeout.
+ * writes for a `skip-copilot` answer, `copilot_mode` is `off`. Checks count as settled
+ * only for an observation of the head with no unit pending (summarizeChecks; a skipped
+ * unit is settled, and act asks when it may not be skipped), and not while a rerun this
+ * pack issued on the head has not visibly started. Both deadlines (`copilot_wait_min`,
+ * `ci_wait_min`, at most 140 minutes, checked by preflight and devflow-smoke) end before
+ * the node's 150-minute timeout.
  *
  * Reads are retried: a forge read that fails five polls in a row refuses.
  *
@@ -91,6 +93,7 @@ try {
     copilot_wait_min: input('copilot_wait_min'),
     ci_wait_min: input('ci_wait_min'),
     required_checks: input('required_checks'),
+    allow_skipped_checks: input('allow_skipped_checks'),
   });
   const repo = nullableJson(input('repo')) as Repo;
   const base = input('base');
@@ -136,7 +139,12 @@ try {
       const observed = read('forge checks.state', () => forge('checks.state', { ref }));
       if (observed !== undefined) {
         state = observed;
-        summary = summarizeChecks(observed, head, settings.requiredChecks);
+        summary = summarizeChecks(
+          observed,
+          head,
+          settings.requiredChecks,
+          settings.allowSkippedChecks
+        );
         const waiting = pendingReruns(observed.units, issued, head);
         checks = checksVerdict(summary, waiting.length > 0, now, ciDeadline);
       } else if (now >= ciDeadline) {

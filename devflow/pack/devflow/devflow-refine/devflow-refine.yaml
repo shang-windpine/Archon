@@ -117,10 +117,13 @@ nodes:
             required: [summary, open_questions]
             additionalProperties: false
 
+        # context: fresh — the reviewer never inherits draft's session, even when
+        # @devflow-cross and @devflow-main resolve to the same provider (DESIGN §4).
         - id: review
           depends_on: [draft]
           command: review
           model: "@devflow-cross"
+          context: fresh
           mutates_checkout: false
           with:
             round: $control.output.round
