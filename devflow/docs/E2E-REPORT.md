@@ -45,3 +45,13 @@
 - 本地 checkstyle 失败 → `fix-style` 修复：只在 fixture 中覆盖。
 - Jira：本机没有 jira-cli，`jira_view_cmd` 路径只用桩命令测过。
 - 公司仓库的 required checks、Actions 是否在 draft PR 上运行（`pull_request` 事件默认包含 draft，但 job 可能写了 `if: !github.event.pull_request.draft`）。被这样跳过的 job 结论是 `skipped`，引擎 forge 会把它当成绿色，这次 E2E 时的 pack 可能因此在 CI 没跑的情况下判定 done；之后的 pack 不再把 skipped 当作通过（`allow_skipped_checks`，[HANDOFF.md](HANDOFF.md) §8.1 第 3 条）。
+
+## 修复后回归（GRT-3，最终版 pack）
+
+在所有修复（commit `devflow: reviewer session isolation, …`）之后重新 `install.sh --force` 到测试仓库并回归：
+
+| 步骤 | run id | 结果 |
+|---|---|---|
+| devflow-smoke | — | 17 行全部 PASS（新增 `deliver settings`；`gh auth` 带 host） |
+| devflow-deliver GRT-3 | `26889aba-…` | 第 1 轮：implement → draft PR #3 → request-review 约 20 秒内判定 Copilot 未登记（`request_failed`）→ `it` infra 自动 rerun → escalate「needs you: requesting a Copilot review failed」。`respond … skip-copilot` 后第 2 轮：checks 绿、done；summarize/finish 完成，PR 仍为 draft |
+| devflow-verify GRT-3 | — | 8 个 API 用例，Pi 计划评审 0 gap；人工回答「API-2 FAIL（NPE）」后，triage 输出 `all_passed:false`，写出 `followup-work.md`，并指出回答里的场景实际对应 API-3、按代码不应抛 NPE、可能是过期构建（判断正确：这是故意编造的失败） |
