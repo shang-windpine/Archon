@@ -4,6 +4,8 @@
 
 本文所有错误原文都来自 pack 源码（`devflow/pack/devflow/**`）或在沙箱里实际复现过。源码与本文不一致时，以源码为准，并把本文改对。
 
+**Windows 工作电脑：** 复现和实测都是在 macOS 开发电脑上做的。本文的 `bash` 代码块，WSL2（[SETUP.md](SETUP.md) §W 的 Path A）在 Ubuntu 终端里执行，原生 Windows（Path B）在 **Git Bash** 里执行，不要贴进 PowerShell；标了 `powershell` 的代码块才在 PowerShell 里执行。命令写法的差别（`jq -b`、`pbpaste`、`C:\` 路径加引号）见 [OPERATIONS.md](OPERATIONS.md) §0.4。只在 Windows 上出现的问题集中在 **§3.11**。
+
 ---
 
 ## 0. 动手前先读：五条护栏
@@ -40,6 +42,8 @@ echo "$WS"     # 期望：.../workspaces/<owner>/<repo>
 ```
 
 `archon` 不在 PATH 上时，把下文所有 `archon` 换成 `bun ~/Archon/packages/cli/src/cli.ts`（`~/Archon` 是 fork 的 clone 位置），并且每条命令加 `--cwd "$REPO_DIR"`。
+
+**Windows（原生，Git Bash）：** `REPO_DIR` 写 `/c/Users/<你>/work/<repo>` 形式。凡是 `X=$(... | jq -r ...)` 把 jq 的结果放进变量的地方（本文里的 `WS=...`、`D=...`），**都要给 jq 加 `-b`**（例如 `jq -r -b .artifactsDir`）：Windows 的 `jq.exe` 默认输出 CRLF，变量末尾会多一个看不见的 `\r`，后面的 `tail "$D/..."`、`cd $WS/...` 就报 `No such file or directory`。旧版 jq 不认识 `-b` 时改用 `| tr -d '\r'`。`artifactsDir` 是 `C:\Users\...` 形式，在 Git Bash 里加了双引号使用没有问题（`"$D/snapshot.json"`）。下文的 `$WS/worktrees/<branch>` 等不加引号的写法，在路径带空格时要加双引号。
 
 ### 1.2 找到出问题的 run
 
@@ -92,7 +96,7 @@ deliver 的问题详情在 `escalation.md`（见 §2.2），路径就写在 atte
 archon workflow get $RUN --json --verbose | jq '.nodes[] | select(.state=="failed") | {nodeId, error, exitCode}'
 ```
 
-没有 `jq` 就先装：`brew install jq`。
+没有 `jq` 就先装：`brew install jq`（WSL2：`sudo apt install jq`；原生 Windows：PowerShell 里 `winget install --id jqlang.jq -e`，再新开 Git Bash）。
 
 预期：一个对象，`error` 是失败原因。devflow 的 script 节点失败时，error 都以节点名开头，例如 `preflight: ...`、`publish: ...`、`await: ...`、`devflow-refine intake: ...`。拿这个前缀去 §3 查。
 
@@ -131,6 +135,7 @@ ls -la "$STATE"                                      # 跨 run 的状态目录
 | deliver **每一轮**都来问人，原因都是 Copilot（`Copilot did not review the current head in time` 或 `requesting a Copilot review failed`） | 先 §3.5.4（request_failed）或 §3.5.6（timeout）；以后的 run 按 §3.5.5 选 `copilot_mode`；改了 settings 新 run 却没生效 → §3.7.6 |
 | 想知道 judge / act / triage 当时判了什么、用的哪个模型、冻结的 settings 值 | §2.8 |
 | 读一个旧 run 的 artifacts，格式和本文描述的不一样 | §2.2 末尾「旧版本 run」 |
+| Windows 上：`bash executable not found`、`ARCHON_BASH_PATH`、`$'\r': command not found`、`Filename too long`、`mvn: command not found`、删不掉 worktree、路径里多了 `\r`、Git Bash 把参数改写了 | §3.11 |
 
 ---
 
@@ -454,6 +459,15 @@ claude auth status --json                                    # 确认是订阅�
 ~/Archon/devflow/scripts/doctor.sh
 ```
 
+原生 Windows：`echo` 打印 `set in shell` 时，变量除了可能在 Git Bash 的 `~/.bashrc` 里，更可能是 Windows 的用户或系统环境变量。在 PowerShell 里查：
+
+```powershell
+[Environment]::GetEnvironmentVariable('ANTHROPIC_API_KEY', 'User')      # 有输出 = 用户环境变量里有
+[Environment]::GetEnvironmentVariable('ANTHROPIC_API_KEY', 'Machine')   # 有输出 = 系统环境变量里有（删除要管理员，找 IT）
+```
+
+用户变量里有、而且用户确认不需要 API 计费：`[Environment]::SetEnvironmentVariable('ANTHROPIC_API_KEY', $null, 'User')`，然后关掉所有终端重开，再跑 doctor。
+
 为什么不能为了 Pi 用 Anthropic 模型就加 `ANTHROPIC_API_KEY`：它会同时改变 Claude 节点的计费方式。Pi 用非 Anthropic 后端（自定义网关、OpenRouter 等）。
 
 #### 3.2.3 其他
@@ -510,7 +524,7 @@ preflight 失败时还没有 agent 花钱，也没写远端，而且 preflight �
 | `forge check ...` 后接 `devflow reaches GitHub through the forge plugin. ...` | 见 3.3 的 `no_plugin_for_host` / `no_credential` | 按 3.3 处理 |
 | `git remote <name> does not resolve to a repository through an installed forge plugin. ...` | 同上 | 按 3.3 处理 |
 | `forge pr.view failed: ...`（带 `devflow reaches GitHub ... run the devflow-smoke workflow ...`） | 认证通过了，但读仓库失败（多为 `authorization`） | 按 3.3 的 `authorization` 处理 |
-| ``copilot_mode is request but `gh --version` failed; install the GitHub CLI, or set copilot_mode to auto or off`` | 没装 gh | `brew install gh`，或改模式 |
+| ``copilot_mode is request but `gh --version` failed; install the GitHub CLI, or set copilot_mode to auto or off`` | 没装 gh，或 gh 不在运行 Archon 的那一侧的 PATH 上 | `brew install gh`（Windows 见 [SETUP.md](SETUP.md) 2.3 的「Windows」段落：WSL2 用 GitHub 官方 apt 源，原生用 `winget install --id GitHub.cli -e`，装完重开终端再启动 run），或改模式 |
 | ``copilot_mode is request but `gh auth status --hostname github.com` failed; run `gh auth login --hostname github.com` `` | gh 没登录 | `gh auth login --hostname github.com`，然后 resume |
 | `input pr must be a pull request number, got "..."` | `--input pr=` 不是正整数 | 改正后开新 run |
 | `forge pr.view found no pull request #<N>` | 该编号的 PR 不存在 | 核对编号 |
@@ -540,7 +554,7 @@ preflight 失败时还没有 agent 花钱，也没写远端，而且 preflight �
 publish: checkstyle_cmd still fails on HEAD after fix-style (exit 1); see <artifacts>/checkstyle-final.log. Fix it on the branch, commit, then rerun devflow-deliver on the same --branch
 ```
 
-原因：fix-style 最多修 3 次仍未通过；或者命令本身在这个仓库里永远失败（插件没配置、多模块需要 `-pl`、Maven 离线拿不到插件、用了 `mvn` 但仓库要求 `./mvnw`）。
+原因：fix-style 最多修 3 次仍未通过；或者命令本身在这个仓库里永远失败（插件没配置、多模块需要 `-pl`、Maven 离线拿不到插件、用了 `mvn` 但仓库要求 `./mvnw`）。原生 Windows 上还有两种：`checkstyle-final.log` 里是 shell 报错（`command not found`、`$'\r'`、`bash executable not found`）而不是 checkstyle 违规，见 §3.11.1、§3.11.3、§3.11.4；违规全是换行类规则，见 §3.11.3。
 
 注意：`fix-style` 只修 checkstyle。`local_verify_cmd` 失败**不会**让 publish 拒绝，见 3.5.1a。
 
@@ -902,9 +916,9 @@ archon workflow wake            # 推进所有已回答、已到期的 continuat
 | `paused`（在等 attention） | 状态都持久化了，直接回答即可（3.6.2）。回答后在当前 shell 继续，或加 `--detach` |
 | `paused`，而且你已经用 `--json` 回答过 | `archon workflow resume $RUN --detach` |
 | `failed`（例如前台 run 被 Ctrl-C） | 按 [OPERATIONS.md](OPERATIONS.md) §3.7 的决策树：refine/verify 可以 `archon workflow resume $RUN --detach`；deliver 失败节点在 `rounds.*` 里时 abandon 后开新 run（§3.5 开头） |
-| `running`（重启时正在跑，例如在 await 或 implement；或者你直接关掉了前台 run 的终端窗口） | 见 3.7.2。关终端发的是 SIGHUP，进程来不及把 run 记成 failed，所以它停在 running |
+| `running`（重启时正在跑，例如在 await 或 implement；或者你直接关掉了前台 run 的终端窗口） | 见 3.7.2。关终端发的是 SIGHUP，进程来不及把 run 记成 failed，所以它停在 running。Windows 上关掉控制台窗口（Git Bash、PowerShell、Windows Terminal 的标签页）效果相同；Windows Update 自动重启、WSL 被 `wsl --shutdown` 或随 Windows 睡眠暂停后被关掉，也属于这一行 |
 
-可选：装一个 macOS 定时器，让已回答、已到期的 run 自动推进（不需要开着 server）：`archon workflow wake schedule install --interval 5 --json`。
+可选：装一个 macOS 定时器，让已回答、已到期的 run 自动推进（不需要开着 server）：`archon workflow wake schedule install --interval 5 --json`。**这条命令只支持 macOS**（Archon CLI 文档 `workflow wake` 一节）。Windows 上不需要它：devflow 的暂停点在你回答时就会继续（加 `--detach`）；想要定时推进，Archon 文档给的是 Windows 任务计划程序（Task Scheduler）的手工配置方法，从源码运行时配置更复杂，不建议在 devflow 里用。需要时手工执行 `archon workflow wake`。WSL2 里同样不支持 `schedule install`（文档给的是 systemd user service 的写法）。
 
 #### 3.7.2 run 一直是 running，但 owner 进程已经没了
 
@@ -983,7 +997,7 @@ archon workflow run devflow-deliver --branch <branch> --input key=$KEY --detach 
 # 一次性覆盖，最可靠：
 archon workflow run devflow-deliver --branch <branch> --input key=$KEY --input copilot_mode=off --detach --json
 # 或把新文件复制进已有 worktree：
-cp "$REPO_DIR/.archon/packs/devflow.yaml" $WS/worktrees/<branch>/.archon/packs/devflow.yaml
+cp "$REPO_DIR/.archon/packs/devflow.yaml" "$WS/worktrees/<branch>/.archon/packs/devflow.yaml"
 ```
 
 ### 3.8 refine 与 verify 特有的问题
@@ -1002,11 +1016,11 @@ devflow-refine intake: no material for <KEY> (...): set jira_view_cmd, pass --in
 
 ```bash
 jira issue view $KEY --plain --comments 30 | head      # 手工确认 jira-cli 能用
-mkdir -p "$STATE/inbox" && pbpaste > "$STATE/inbox/slack.md"   # 粘贴 Slack 内容
+mkdir -p "$STATE/inbox" && pbpaste > "$STATE/inbox/slack.md"   # 粘贴 Slack 内容；Windows 没有 pbpaste，换成 OPERATIONS §2.1 的替代写法
 archon workflow run devflow-refine --input key=$KEY --detach --json
 ```
 
-`brief_file` 必须是**绝对路径**，否则报 `brief_file "..." is not an absolute path to a readable file`。
+`brief_file` 必须是**绝对路径**，否则报 `brief_file "..." is not an absolute path to a readable file`。原生 Windows 写成 `C:/Users/<你>/notes/x.md`；写成 `/c/Users/...` 时可能被当成当前盘符下的 `\c\Users\...`，同样报这条错（§3.11.5）。
 
 #### 3.8.2 refine：轮次用完，进入 final-gate
 
@@ -1075,9 +1089,147 @@ bash ~/Archon/devflow/test/sandbox.sh --copy /tmp/devflow-sb-$(whoami)-check
 source /tmp/devflow-sb-$(whoami)-check/env.sh && cd /tmp/devflow-sb-$(whoami)-check/repo && archon workflow test .archon/workflows/devflow
 ```
 
-完整的验证顺序见 §4.3。
+完整的验证顺序见 §4.3。原生 Windows 上，`install.sh --link` 和不带 `--copy` 的 `sandbox.sh` 在 Git Bash 里通常不会建出真正的符号链接（`ln -s` 默认会复制，见 [SETUP.md](SETUP.md) §6.1），所以这条报错在那里更可能是别的原因：先确认是在 `<沙箱>/repo` 或 Java 仓库根目录里执行的，`ls .archon/workflows/devflow/devflow-deliver/fixtures/` 能列出 `*.stubs.yaml`。
 
 预期最后一行：`<N> passed, 0 failed`。
+
+### 3.11 Windows 特有的问题
+
+背景：devflow 只在 macOS 上做过真实运行。原生 Windows 的代码路径（Git Bash 执行命令类 setting 和 `until_bash`、超时用 `taskkill /T /F`）只有单元测试，**没有在真实 Windows 上跑过**。下面的条目按引擎源码、pack 源码和 Windows/Git Bash 的已知行为整理，没有逐条真机复现。遇到本节没有的现象，记录原文（`archon workflow get $RUN` 的 `Reason:`、相关 log 的前几十行）报告给人，不要改 pack 或引擎去绕过。
+
+#### 3.11.1 `bash executable not found` / `cannot execute bash` / `ARCHON_BASH_PATH points to a path that does not exist`
+
+看到（节点 error、`Reason:` 或 log 里）：
+
+```
+<label> failed: bash executable not found at 'C:\Program Files\Git\bin\bash.exe'. Set ARCHON_BASH_PATH if Git Bash is installed elsewhere (e.g. user-scope installer at %LOCALAPPDATA%\Programs\Git\bin\bash.exe).
+Loop group 'rounds' until_bash failed: cannot execute bash at '...' (ENOENT). Set ARCHON_BASH_PATH if Git Bash is installed elsewhere.
+ARCHON_BASH_PATH points to a path that does not exist: '...'
+```
+
+或者 pack 的 script 节点（`checkstyle`、`intake`、`request-review`、smoke 的 `jira`）报 `spawn C:\Program Files\Git\bin\bash.exe ENOENT` 之类的错误。
+
+原因：原生 Windows 上，引擎（`bash:` 节点、`until_bash`）和 pack（命令类 setting）都要用 Git Bash，按 [SETUP.md](SETUP.md) W.4 列出的顺序找 `bash.exe`。没装 Git for Windows、装在别处，或 `ARCHON_BASH_PATH` 写错了。前两条消息来自引擎，第三条引擎和 pack 都会报；pack 找不到 Git Bash 时报的是 `spawn ... ENOENT`，不带 `ARCHON_BASH_PATH` 的提示。
+
+处理（PowerShell）：
+
+```powershell
+where.exe bash                                                       # 列出 PATH 上所有 bash.exe
+[Environment]::GetEnvironmentVariable('ARCHON_BASH_PATH', 'User')    # 看是否设过
+```
+
+- `where.exe` 的输出里有以 `\Git\bin\bash.exe` 结尾的一行，但不在 W.4 的默认位置：`[Environment]::SetEnvironmentVariable('ARCHON_BASH_PATH', '<那一行>', 'User')`。**不要**选 `C:\Windows\System32\bash.exe`（WSL 启动器）。
+- `ARCHON_BASH_PATH` 设了但指向不存在的文件：改正，或者 `[Environment]::SetEnvironmentVariable('ARCHON_BASH_PATH', $null, 'User')` 删掉。
+- 根本没装：`winget install --id Git.Git -e`（SETUP W.4）。
+
+改完关掉所有终端重开（环境变量在 run 启动时冻结进进程），再按 [OPERATIONS.md](OPERATIONS.md) §3.7 处理失败的 run：只是环境问题、没改 pack 和 settings，refine/verify 可以 resume；deliver 失败在 `rounds.*` 里时，按 §3.5 开头选 resume 或 abandon 后开新 run。
+
+#### 3.11.2 Git Bash 把参数改写了（`/PID`、`/T` 之类变成路径）
+
+看到：在 Git Bash 里执行 `taskkill /PID 1234 /T /F` 报 `ERROR: Invalid argument/option - 'C:/Program Files/Git/PID'`；或者别的 Windows 程序收到的参数里出现了 `C:/Program Files/Git/...`。
+
+原因：Git Bash 启动 Windows 程序时，会把**看起来像 POSIX 路径**的参数（以 `/` 开头）改写成 Windows 路径。这对 `/c/Users/...` 有用，对 Windows 风格的开关（`/PID`）就坏事。
+
+处理：Windows 风格开关的命令（`taskkill`、`tasklist /FI`、`netstat`、`findstr`）在 PowerShell 里执行。必须在 Git Bash 里执行时，把开关写成双斜杠（`taskkill //PID 1234 //T //F`），或者在命令前加 `MSYS_NO_PATHCONV=1 `。**不要**全局设置 `MSYS_NO_PATHCONV`：devflow 的脚本和本文的命令依赖这个改写把 `/tmp/...`、`/c/...` 传给 Windows 程序。
+
+#### 3.11.3 CRLF：`$'\r': command not found`、checkstyle 只在本机报换行问题
+
+看到（任选其一）：
+
+- `./mvnw: line 2: $'\r': command not found`、`/usr/bin/env: 'sh\r': No such file or directory`、`set: pipefail\r: invalid option name`（在 `checkstyle.log`、`checkstyle-final.log` 或手工执行时）；
+- 在干净的 base 上 `checkstyle_cmd` 本机 `exit=1`，违规全是换行类规则（`NewlineAtEndOfFile`、`line separator`、`RegexpMultiline` 匹配 `\r` 等），同一个 commit 在 GitHub CI（Linux）上是绿的；
+- `fix-style` 每轮都在"修"同一批换行违规，修不好，最后 `publish` 拒绝。
+
+原因：Git for Windows 默认 `core.autocrlf=true`，checkout 时把文本文件转成 CRLF。shell 脚本（`mvnw`、`.sh`）是 CRLF 就不能执行；对换行敏感的 checkstyle 规则在本机看到的是 CRLF，CI 看到的是 LF。agent 新写的文件是 LF，同一个 worktree 里会混着两种换行。
+
+处理：
+
+```bash
+git -C "$REPO_DIR" config --get core.autocrlf                  # true = checkout 时转 CRLF
+git -C "$REPO_DIR" check-attr eol text -- mvnw                 # .gitattributes 有没有给 mvnw 指定 eol
+grep -c $'\r' "$REPO_DIR/mvnw"                                 # 大于 0 = mvnw 是 CRLF
+grep -c $'\r' <ARCHON_SRC>/devflow/scripts/doctor.sh           # 应为 0（Archon 的 .gitattributes 强制 *.sh 为 LF）
+```
+
+- devflow 自己的 `.sh` 是 CRLF（最后一条大于 0）：说明 clone 不是用 git 做的（例如下载 zip 解压的），或被编辑器改过。重新 `git clone` Archon fork。
+- Java 仓库的 `mvnw` 或换行规则有问题：**不要自己改用户的 git 全局设置，也不要提交换行改动**。把现象和上面四条命令的输出告诉用户，由用户（或团队）决定。可选方案供用户参考：只对这个仓库设 `git -C "$REPO_DIR" config core.autocrlf input` 后重新 checkout 工作区（会改动工作区文件的换行，先确认没有未提交改动）；或者团队在仓库的 `.gitattributes` 里给 `mvnw`、`*.java` 指定 `eol=lf`（这是要提交的仓库改动，由团队决定）；或者 `checkstyle_cmd` 暂时用不含换行规则的检查。改了 settings 之后按 §3.5.1 开新 run。
+- Path A（WSL2）出现这些现象：通常是把 Windows 侧的 clone 复制进了 WSL，或者在 WSL 里设了 `core.autocrlf=true`。在 WSL 里重新 clone，`core.autocrlf` 不要设成 `true`。
+
+#### 3.11.4 Git Bash 里 `mvn` / `java` / `jira` / `gh` / `archon`: `command not found`，PowerShell 里却能用
+
+看到：`checkstyle.log` 里 `bash: mvn: command not found`（或 `sh: mvn: command not found`），doctor.sh 报 `not on PATH`，但 PowerShell 里 `mvn -v` 正常。
+
+原因（按常见程度）：
+
+1. Git Bash 窗口是在安装或改 PATH **之前**打开的。已经打开的终端（包括 Windows Terminal 本身）不会看到新的 PATH。
+2. 这个工具在 PowerShell 里是 PowerShell 的别名、函数或模块（例如在 `$PROFILE` 里定义的 `function archon`），Git Bash 看不到。
+3. 工具只放在了"系统变量"或某个只对 PowerShell 生效的位置，或者是 IDE 自带的（例如 IntelliJ 内置的 Maven），根本不在 PATH 上。
+4. 目录里只有 `.cmd`/`.bat`/`.ps1` 文件，没有 `.exe` 或 shell 脚本：Git Bash 输入 `foo` 时不会去找 `foo.cmd`。
+
+处理：
+
+```bash
+command -v mvn java jira gh archon                   # Git Bash：哪个没输出就是哪个找不到
+```
+
+```powershell
+where.exe mvn                                        # PowerShell：看它实际在哪个目录
+Get-Command mvn | Format-List CommandType, Source    # CommandType 是 Alias/Function 就是原因 2
+```
+
+- 原因 1：关掉所有终端窗口（Windows Terminal 要整个退出）再开；还不行就注销重新登录。
+- 原因 2：Git Bash 用自己的入口（`archon` 见 [SETUP.md](SETUP.md) 3.2「Windows」）。
+- 原因 3、4：把真正的安装目录（`where.exe` 打印的目录；Maven 是它的 `bin`，里面有 `mvn` shell 脚本）加进**用户 PATH**（SETUP W.4，不要用 `setx`），重开终端。仓库有 `./mvnw` 时，最简单的是让 `checkstyle_cmd`/`local_verify_cmd` 用 `./mvnw`，不依赖 PATH 上的 `mvn`。
+- Archon 是在**启动 run 的那个终端**的环境里运行的：修好 PATH 后，要从新开的终端启动新 run（或 resume），旧 run 里的进程看不到新 PATH。
+
+#### 3.11.5 路径问题：`\r`、`/c/...`、`Filename too long`、空格
+
+| 看到 | 原因 | 处理 |
+|---|---|---|
+| 用 `$D`、`$WS` 拼出的路径报 `No such file or directory`，但 `ls` 那个目录明明在 | 变量来自 `jq`，末尾多了 `\r`（Windows 的 `jq.exe` 输出 CRLF） | 给 jq 加 `-b`，或 `\| tr -d '\r'`（§1.1） |
+| `brief_file "..." is not an absolute path to a readable file`，路径写的是 `/c/Users/...` | 这个参数可能没被 Git Bash 改写，Windows 程序把 `/c/Users/...` 理解成当前盘符下的 `\c\Users\...` | 写成 `C:/Users/<你>/...` 重新开 run |
+| `error: unable to create file ...: Filename too long`（git checkout、worktree 创建、`git status`），或 Maven 报找不到很深的文件 | 路径超过 Windows 传统的 260 字符上限 | `git config --global core.longpaths true`；系统级 `LongPathsEnabled` 要管理员（找 IT）；KEY 和分支名尽量短。已经创建了一半的 worktree：先确认 worktree 里没有要保留的未提交改动，再 `archon workflow abandon $RUN`，然后开新 run |
+| 报错里的路径在空格处被截断（例如 `C:\Users\John` 后面没了） | Windows 用户名或某个目录名带空格，某处没有加引号 | 记录完整报错报告给人（没在真机验证过，可能是 pack 或引擎的问题）。临时办法只能由用户决定，例如把仓库 clone 到不带空格的路径 |
+| Archon 输出里的 `C:\Users\...` 路径在 Git Bash 里 `cat`/`cd` 报错 | 没加引号，反斜杠被 bash 吃掉 | 加单引号：`cat 'C:\Users\...'`；或 `cygpath -u '<路径>'` 转换 |
+
+#### 3.11.6 删不掉 worktree：`abandon`、`archon complete`、`isolation cleanup` 报文件被占用
+
+看到：`archon workflow abandon`、`archon complete <branch>` 或 `archon isolation cleanup` 报 `EBUSY`、`EPERM`、`resource busy or locked`、`Permission denied`、`Device or resource busy`，或者 `The process cannot access the file because it is being used by another process`；worktree 目录还在。deliver 中途写文件、`git checkout` 报同类错误也是这个原因。
+
+原因：Windows 不允许删除或覆盖被其他进程打开的文件。常见的占用者：在 worktree 里打开的 IDE（索引、构建）、为 verify 人工测试在 worktree 里启动的服务（`java.exe`）、Maven 残留的 JVM、`cd` 在那个目录里的终端、杀毒软件的扫描。
+
+处理（**只结束你确认属于这个 worktree 的进程**）：
+
+1. 先自己关：关掉 IDE 里的这个项目、停止在 worktree 里启动的服务（在它的终端里 Ctrl-C）、把所有 `cd` 在 worktree 里的终端切走或关掉。然后重试原来的命令。
+2. 还删不掉，在 PowerShell 里找占用者：
+
+   ```powershell
+   tasklist /FI "IMAGENAME eq java.exe"                                    # 列出所有 java 进程和 PID
+   Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Select-Object ProcessId, CommandLine | Format-List
+   ```
+
+   第二条打印每个 java 进程的完整命令行。只看命令行里**含有这个 worktree 路径**的那几个。把 PID 告诉用户，用户确认后：
+
+   ```powershell
+   taskkill /PID <pid> /T /F
+   ```
+
+   **不要**用 `taskkill /IM java.exe` 或按进程名批量杀：会把用户别的 Java 程序（包括 IDE）一起杀掉。**不要**杀 `claude.exe`：那是正在用的 Claude Code 会话。命令行看不出是谁占用时，用 Windows 自带的"资源监视器"（`resmon`）→ CPU → 关联的句柄，搜索 worktree 路径，或者让用户重启电脑。
+3. 重试 `archon workflow abandon $RUN` / `archon complete <branch>`。仍失败就把完整报错报告给人。**不要**手工 `rm -rf` worktree 目录（[OPERATIONS.md](OPERATIONS.md) §3.7「不要做的事」）：Archon 和 git 都还记录着这个 worktree。
+
+timeout 和取消时残留的进程：pack 的命令超时在 Windows 上用 `taskkill /T /F` 结束整个进程树；但引擎的 `until_bash`（`fix-style` 重跑 checkstyle 用的就是它）超时时只结束它自己的进程（Archon 文档 `reference/workflow-language.md`「Bash and script node timeouts」），Maven 派生的 `java.exe` 可能残留并占用 worktree 文件，按上面第 2 步找出来。
+
+#### 3.11.7 其他 Windows 现象
+
+| 看到 | 原因 | 处理 |
+|---|---|---|
+| `install.sh --link` 打印了 `linked`，但改 `<ARCHON_SRC>` 里的 pack 不生效 | Git Bash 的 `ln -s` 默认复制目录，没有建链接（[SETUP.md](SETUP.md) §6.1） | 改用默认的复制安装：`bash <ARCHON_SRC>/devflow/scripts/install.sh <java-repo> --force` |
+| smoke 的 `maven` 一行 WARN 或显示 `version unknown`，或 `tools` 节点报错，但 Git Bash 里 `./mvnw -v` / `mvn -v` 正常 | 已知的可能误报：smoke 用 Bun 在 PATH 上找并执行 `mvn`，Bun 在 Windows 上对 Maven 的 `mvn.cmd` 的处理没有在真机验证过 | 以 Git Bash 里手工执行的结果为准（[SETUP.md](SETUP.md) §10.3 的「Windows」段落），记录并报告 |
+| `jira init`、`gh auth login`、`claude`、`pi` 在 Git Bash 里显示错乱、按键无反应、卡住 | 单独的 mintty 窗口（Git 自带的 "Git Bash" 快捷方式）对部分交互式程序支持不好 | 在 Windows Terminal 里打开 Git Bash，或者在 PowerShell 里执行这一条交互命令；登录结果在同一个 Windows 用户下共用 |
+| `bun install`、Maven、`git status` 特别慢；偶发"文件被占用" | 杀毒软件实时扫描 | 找 IT 评估排除目录（[SETUP.md](SETUP.md) W.5 第 3 条）；不要自己关杀毒 |
+| deliver 在 `await` 等待期间电脑睡着，醒来后 Copilot/CI 直接超时来问你 | 睡眠期间等待时间照样流逝；Archon 的防睡眠挡不住合盖和手动睡眠，WSL2 里也没有防睡眠 | 回答 `continue` 再等一轮；以后跑 deliver 时别让电脑睡眠（SETUP W.5 第 4 条） |
+| WSL2 里 `which gh`（或 `java`、`pi`、`node`）打印 `/mnt/c/...` | WSL 默认把 Windows 的 PATH 附加进来，找到的是 Windows 侧的程序，违反"同一侧"规则（SETUP W.1） | 在 WSL 里安装这个工具（SETUP W.3 的表），新开终端，确认 `which` 打印 Linux 路径 |
+| WSL2 里 doctor 全 PASS，但 run 里报没登录；或反过来 | 登录做在了另一侧（例如在 Windows 的 PowerShell 里 `gh auth login`，Archon 却跑在 WSL 里） | 在运行 Archon 的那一侧重新登录（SETUP W.1） |
 
 ---
 
@@ -1137,6 +1289,12 @@ archon workflow test .archon/workflows/devflow
 
 做完第 5 步后，这个终端的 `ARCHON_HOME` 指向沙箱，`archon` 是沙箱定义的 shell 函数。**回到真实仓库之前新开一个终端**（或 `unset ARCHON_HOME; unset -f archon`），否则后面的 `archon` 命令和 `doctor.sh` 读的都是沙箱的配置和数据库。
 
+**Windows：**
+
+- WSL2（Path A）：照上面执行，和 macOS 相同。
+- 原生 Windows（Path B）：在 **Git Bash** 里执行整段（`sandbox.sh`、`source`、`unset -f` 都是 bash 的东西，PowerShell 里不能用）。`/tmp/...` 在 Git Bash 里映射到 `%LOCALAPPDATA%\Temp`，sandbox.sh 只接受 `/tmp/` 下的路径，照抄即可。第 1–4 步（`bun test`、`tsc`、`biome`、`--check`）不依赖 shell，应当和 macOS 结果一样。第 5 步在原生 Windows 上**没有真机跑过**：沙箱的 `env.sh` 用 `export ARCHON_HOME="/tmp/..."` 这种 POSIX 路径，要靠 Git Bash 在启动 `bun.exe` 时把它改写成 Windows 路径。第 5 步失败、而报错里有 `/tmp/...` 路径找不到之类的内容时，把这一步放到 WSL2 或 macOS 上做，并把现象报告给人；不要为此改 `sandbox.sh`。
+- 单元测试里和 Windows 有关的只有 `commandShell` 的查找逻辑（`test/lib/devflow.test.ts`），它在任何平台上都能跑；"Windows 上真的能执行"不是这些测试能证明的。
+
 以下各项**不需要跑**，也不要把它们当作通过的证据：
 
 - `archon validate commands`：它不检查 pack 的 command `.md`，只列出 pack 的 `[script]` 条目；按名字查 `archon validate commands judge-ci` 会报 `Command 'judge-ci' not found`（pack command 带命名空间前缀），这不是错误。
@@ -1175,6 +1333,8 @@ archon workflow test .archon/workflows/devflow
 ```bash
 ~/Archon/devflow/scripts/install.sh "$REPO_DIR" --force
 ```
+
+（原生 Windows 在 Git Bash 里执行，写成 `bash ~/Archon/devflow/scripts/install.sh "$REPO_DIR" --force` 最稳。安装前先关掉 IDE 里打开的 `<java-repo>/.archon/workflows/devflow/` 文件，否则 `--force` 删除旧目录时可能报文件被占用，见 §3.11.6。）
 
 预期输出包含：
 

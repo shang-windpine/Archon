@@ -4,8 +4,8 @@
 # run at start. Every value is text; a list is comma-separated with no empty items.
 # One run can override any setting with `--input name=value`.
 #
-# Command templates: `{token}` is replaced by a shell-quoted value before `sh -c` runs
-# the command, so never put a token inside quotes. Credentials never go here (this file
+# Command templates: `{token}` is replaced by a shell-quoted value before the POSIX shell
+# (`sh`; Git Bash on Windows) runs the command, so never put a token inside quotes. Credentials never go here (this file
 # is copied into worktrees): tools use their own login, or ~/.archon/.env.
 settings:
   # Prints one Jira issue for devflow-refine. {key} is the KEY (for example ABC-123).

@@ -34,14 +34,21 @@ interface Ran {
 
 /** Runs a tool already found on PATH; stdout and stderr together, since `java -version` prints to stderr. */
 function run(argv: readonly string[]): Ran {
-  const result = Bun.spawnSync([...argv], {
-    stdout: 'pipe',
-    stderr: 'pipe',
-    timeout: COMMAND_TIMEOUT_MS,
-  });
+  let result: ReturnType<typeof Bun.spawnSync>;
+  try {
+    result = Bun.spawnSync([...argv], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: COMMAND_TIMEOUT_MS,
+    });
+  } catch (error) {
+    // A tool found on PATH that cannot be spawned directly (a Windows `.cmd` shim such as
+    // mvn.cmd) is one row's failure, not the whole probe's.
+    return { code: null, output: error instanceof Error ? error.message : String(error) };
+  }
   return {
     code: result.exitCode,
-    output: `${result.stdout.toString()}\n${result.stderr.toString()}`,
+    output: `${result.stdout?.toString() ?? ''}\n${result.stderr?.toString() ?? ''}`,
   };
 }
 

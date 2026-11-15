@@ -1,6 +1,6 @@
-# 端到端验证记录（2026-11-14，开发电脑）
+# 端到端验证记录（2026-11-14，开发电脑 macOS）
 
-本文件记录在真实 GitHub 私有仓库上跑通 devflow 全流程时的观察，供交接与排障参考。所有 run 都使用隔离的 `ARCHON_HOME=/tmp/devflow-e2e/home`，Archon 从源码运行（commit `2aabbd0ca` + devflow 分支）。
+本文件记录在真实 GitHub 私有仓库上跑通 devflow 全流程时的观察，供交接与排障参考。开发电脑是 macOS（Apple Silicon），下面所有运行都在 macOS 上完成；工作电脑是 Windows，Windows 上（WSL2 或原生）没有做过任何一次运行，见文末「未能验证的部分」。所有 run 都使用隔离的 `ARCHON_HOME=/tmp/devflow-e2e/home`，Archon 从源码运行（commit `2aabbd0ca` + devflow 分支）。
 
 ## 环境
 
@@ -40,6 +40,7 @@
 
 ## 未能验证的部分（工作电脑上首次使用时重点关注）
 
+- **Windows**：整个流程没有在 Windows 上跑过。WSL2 上 pack 的代码路径与 macOS 相同（`sh -c`、进程组）。原生 Windows 上，命令类 setting 由 Git Bash 执行、超时用 `taskkill /T /F` 结束进程树（`.shared/lib/devflow.ts` 的 `commandShell`），引擎的 `until_bash` 也走 Git Bash：这些**只有单元测试**（只测了 shell 的查找逻辑），从未在真实 Windows 上执行。另外未验证：smoke 的 `maven` 一行在原生 Windows 上能否正确找到并执行 `mvn`（可能误报，手工检查是在 Git Bash 里 `mvn -v`）；`doctor.sh`、`install.sh`、`test/sandbox.sh` 在 Git Bash 里的运行；CRLF checkout、长路径、路径带空格、关闭终端后 `--detach` 后台 run 的存活。处理方法见 [SETUP.md](SETUP.md) §W 和 [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.11。
 - Copilot 有权限时：`@copilot` 请求能否对 **draft PR** 生效；Copilot review 在 `pr.reviews` 里的 login 写法（默认 `copilot_logins` 已列出 4 种）；`requested_reviewers` 中的 login（`Copilot`？）。首次运行时打开 `$ARTIFACTS_DIR/copilot-request.log`、`snapshot.json` 对照。
 - 真实的 `pr_caused` CI 失败（编译错误/测试失败）→ 下一轮修复 的路径：只在 fixtures 与单元测试中覆盖。
 - 本地 checkstyle 失败 → `fix-style` 修复：只在 fixture 中覆盖。

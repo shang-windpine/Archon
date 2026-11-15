@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  commandShell,
   artifactPath,
   parseEnum,
   parseList,
@@ -232,5 +233,52 @@ describe('runCommand', () => {
     expect(Date.now() - started).toBeLessThan(5_000);
     await Bun.sleep(2_500);
     expect(existsSync(marker)).toBe(false);
+  });
+});
+
+describe('commandShell', () => {
+  const none = () => false;
+  test('POSIX uses sh', () => {
+    expect(commandShell({ platform: 'darwin', env: {}, exists: none })).toBe('sh');
+    expect(commandShell({ platform: 'linux', env: {}, exists: none })).toBe('sh');
+  });
+  test('ARCHON_BASH_PATH wins on every platform and must exist', () => {
+    const env = { ARCHON_BASH_PATH: 'D:\\tools\\bash.exe' };
+    expect(commandShell({ platform: 'win32', env, exists: p => p === env.ARCHON_BASH_PATH })).toBe(
+      env.ARCHON_BASH_PATH
+    );
+    expect(() => commandShell({ platform: 'win32', env, exists: none })).toThrow(
+      'ARCHON_BASH_PATH'
+    );
+  });
+  test('Windows finds a user-scope Git Bash', () => {
+    const env = { ProgramFiles: 'C:\\Program Files', LOCALAPPDATA: 'C:\\Users\\a\\AppData\\Local' };
+    const user = 'C:\\Users\\a\\AppData\\Local\\Programs\\Git\\bin\\bash.exe';
+    expect(commandShell({ platform: 'win32', env, exists: p => p === user })).toBe(user);
+  });
+  test('Windows without Git Bash returns the default path, never cmd.exe', () => {
+    expect(
+      commandShell({ platform: 'win32', env: { ProgramFiles: 'C:\\Program Files' }, exists: none })
+    ).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
+  });
+});
+
+describe('runCommand without a usable shell', () => {
+  test('a wrong ARCHON_BASH_PATH is exit 127 with the remedy in the log, not a throw', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'devflow-shell-'));
+    const saved = process.env.ARCHON_BASH_PATH;
+    process.env.ARCHON_BASH_PATH = join(dir, 'missing-bash');
+    try {
+      const result = await runCommand('true', {
+        cwd: dir,
+        timeoutMs: 5000,
+        logPath: join(dir, 'log'),
+      });
+      expect(result.code).toBe(127);
+      expect(result.outputTail).toContain('ARCHON_BASH_PATH');
+    } finally {
+      if (saved === undefined) delete process.env.ARCHON_BASH_PATH;
+      else process.env.ARCHON_BASH_PATH = saved;
+    }
   });
 });

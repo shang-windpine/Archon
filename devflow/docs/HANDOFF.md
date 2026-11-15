@@ -10,7 +10,13 @@
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | 故障决策树（"看到 X 就做 Y"）和 artifacts 读法 |
 | [DESIGN.md](DESIGN.md) | 设计契约（single source of truth），§9 是不可改的规则 |
 | [E2E-REPORT.md](E2E-REPORT.md) | 真实 GitHub 仓库上的端到端记录，排障时很重要 |
-| [research/](research/) | 引擎事实调研笔记（与 Archon 源码冲突时，以源码为准） |
+| [research/](research/) | 引擎事实调研笔记（与 Archon 源码冲突时，以源码为准；是在 macOS 开发电脑上调研的） |
+
+**平台：开发电脑是 macOS，工作电脑是 Windows。** devflow 的开发、离线检查和真实 E2E 全部在 macOS 上完成。工作电脑上要先决定在 WSL2 还是原生 Windows 上运行 Archon（[SETUP.md](SETUP.md) §W）：
+
+- **推荐 WSL2（Path A）**，公司允许时选它：Archon 的 Windows 文档把 WSL2 列为完整兼容的方式；pack 在 Linux 上走的代码路径和 macOS 相同（`sh -c`、进程组超时）；文档里的 bash 命令几乎原样可用。代价是所有工具和登录都要在 Linux 里重做一遍，仓库要 clone 到 WSL 的文件系统里。
+- **原生 Windows（Path B）**，公司禁止 WSL 或工具链只能在 Windows 上用时选它：Git for Windows（Git Bash）是硬前提，引擎的 `bash:`/`until_bash` 和 pack 的命令类 setting 都在 Git Bash 里执行；devflow 的 `.sh` 脚本在 Git Bash 里运行，PowerShell 只用于安装器和环境变量。这条路径**只有单元测试，没有真机运行过**（§4.2）。
+- 两条路径的共同硬规则：Archon、所有它调用的工具、所有登录、Java 仓库的 clone 都在**同一侧**。
 
 ---
 
@@ -73,7 +79,7 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
  devflow-smoke         （独立运行，只读，随时可跑）
 ```
 
-`?` 表示带 `when:` 的条件节点，`∥` 表示并行。`$STATE_DIR` 在 `~/.archon/workspaces/<owner>/<repo>/state/`，跨 run 存在，不在 git 里，删掉 worktree 也不受影响。每个文件的写入者、读取者和字段见 [DESIGN.md](DESIGN.md) §2。
+`?` 表示带 `when:` 的条件节点，`∥` 表示并行。`$STATE_DIR` 在 `~/.archon/workspaces/<owner>/<repo>/state/`（原生 Windows：`%USERPROFILE%\.archon\workspaces\<owner>\<repo>\state\`；WSL2：Linux 里的 `~/.archon/...`），跨 run 存在，不在 git 里，删掉 worktree 也不受影响。每个文件的写入者、读取者和字段见 [DESIGN.md](DESIGN.md) §2。
 
 为什么拆成三个 workflow 而不是一个：每个阶段之间都隔着一段时间不定的人工环节（讨论需求、Copilot/CI 等待、人工测试），而且三个阶段的隔离方式不同（refine/verify 只读、跑在当前 checkout，deliver 要写代码、需要 worktree）。拆开以后每个阶段都可以单独重跑。
 
@@ -109,7 +115,7 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
 | `docs/DESIGN.md` | 设计契约；实现与它不一致时，要么改实现，要么先改它 |
 | `docs/HANDOFF.md`、`SETUP.md`、`OPERATIONS.md`、`TROUBLESHOOTING.md` | 交接、配置、日常操作、排障 |
 | `docs/E2E-REPORT.md` | 2026-11-14 在真实 GitHub 私有仓库上的全流程记录 |
-| `docs/research/*.md` | 引擎调研笔记：`ops`（CLI/run）、`providers`（Claude/Pi）、`packs`（发现与布局）、`nodes`（YAML 语义）、`critic`（25 条编写规则）、`sdlc`（forge op、Copilot）、`testing`（零成本测试） |
+| `docs/research/*.md` | 引擎调研笔记：`ops`（CLI/run）、`providers`（Claude/Pi）、`packs`（发现与布局）、`nodes`（YAML 语义）、`critic`（25 条编写规则）、`sdlc`（forge op、Copilot）、`testing`（零成本测试）。归档笔记，**在 macOS 上调研**，里面的路径、命令和进程行为（进程组、`/tmp`、`brew`）按 macOS 写；Windows 上的差别以 SETUP §W 和 Archon 文档为准，不要改这些笔记 |
 | `pack/devflow/.pack/pack.yaml` | pack settings 的声明（只有 `inputs:`），带默认值 |
 | `pack/devflow/.shared/lib/*.ts` | 共享 TS 模块；契约见 [`.shared/lib/README.md`](../pack/devflow/.shared/lib/README.md)（分 pure 和 host 两类） |
 | `pack/devflow/.shared/scripts/forge-check.ts` | pack 级 named script（`script: forge-check`），smoke 使用 |
@@ -121,10 +127,10 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
 | `templates/archon-home-config.yaml`、`archon-home-env.example` | `~/.archon/config.yaml` 和 `~/.archon/.env` 的模板 |
 | `templates/archon-repo-config.yaml`、`packs-devflow.yaml` | install.sh 写入目标仓库的 `.archon/config.yaml` 和 `.archon/packs/devflow.yaml` |
 | `templates/pi-models.example.json` | Pi 自定义网关 `~/.pi/agent/models.json` 示例 |
-| `scripts/install.sh` | 把 pack 复制（或 `--link` 软链）到目标仓库；不覆盖已有文件；`--force` 只替换 pack 目录 |
-| `scripts/doctor.sh` | 工作电脑环境自检（工具版本、登录状态） |
+| `scripts/install.sh` | 把 pack 复制（或 `--link` 软链）到目标仓库；不覆盖已有文件；`--force` 只替换 pack 目录。bash 脚本，原生 Windows 在 Git Bash 里执行；Windows 上不要用 `--link`（Git Bash 的 `ln -s` 默认会复制，SETUP §6.1） |
+| `scripts/doctor.sh` | 工作电脑环境自检（工具版本、登录状态）。bash 脚本，用 `perl` 做超时（Git for Windows 自带 perl） |
 | `test/lib/*.test.ts`、`test/deliver/*.test.ts` | bun 单元测试（共享库与 deliver 脚本） |
-| `test/sandbox.sh` | 在 `/tmp` 下建一次性沙箱（本地 bare remote、小 Maven 项目、隔离的 ARCHON_HOME） |
+| `test/sandbox.sh` | 在 `/tmp` 下建一次性沙箱（本地 bare remote、小 Maven 项目、隔离的 ARCHON_HOME）。原生 Windows 上 `/tmp` 是 Git Bash 映射的 `%LOCALAPPDATA%\Temp`，没有真机跑过 |
 | `test/archon-script.preload.ts`、`types/archon-script.d.ts` | 由 `archon script preload/types` 生成，不要手改 |
 | `bunfig.toml`、`tsconfig.json`、`biome.jsonc` | pack 自己的测试、类型和格式配置 |
 
@@ -132,7 +138,9 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
 
 ## 4. 当前状态
 
-### 4.1 已验证（开发电脑，2026-11-14）
+### 4.1 已验证（开发电脑 macOS，2026-11-14）
+
+下面全部是在 macOS 上做的。Windows 上（WSL2 或原生）一项都没有跑过。
 
 真实 E2E 在 `github.com/shang-windpine/devflow-e2e-sandbox`（private，Java 17/Maven）上进行，使用 `ARCHON_HOME=/tmp/devflow-e2e/home`。这些 run id 只存在于开发电脑的数据库里，工作电脑上查不到。作为参考：
 
@@ -146,9 +154,20 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
 | devflow-deliver GRT-2（修复后） | `9a533b3c-6931-4f4e-bc04-2c8141935979` | 20 秒内判定 `request_failed`（不再空等）；回答 `skip-copilot` 后第 2 轮 done |
 
 - E2E 跑的是 §8.1 修复之前的 pack；E2E 仓库里那份副本已经不是当前版本（§8.1 的修复只经过离线检查）。
-- 离线检查全部通过：`bun test` 223 pass / 0 fail，`tsc` 0 错误，biome 无问题，四个 workflow `validate` 都通过（0 error / 0 warning），`workflow test` 18 个 fixture 全部通过。
+- 离线检查全部通过：`bun test` 233 pass / 0 fail，`tsc` 0 错误，biome 无问题，四个 workflow `validate` 都通过（0 error / 0 warning），`workflow test` 18 个 fixture 全部通过。
 
 ### 4.2 未验证（在工作电脑上第一次用时重点看）
+
+**Windows 相关（工作电脑是 Windows，先看这些）：**
+
+- **整条流程在 Windows 上从未运行过**，WSL2 和原生 Windows 都没有。WSL2 是 Linux，pack 的代码路径与 macOS 相同，风险主要在工具安装和登录；原生 Windows 的风险更大，见下面几条。
+- 原生 Windows 上，pack 的命令类 setting（`checkstyle_cmd`、`local_verify_cmd`、`jira_view_cmd`、`jira_comment_cmd`、`copilot_request_cmd`、`copilot_confirm_cmd`）交给 Git Bash 执行（`.shared/lib/devflow.ts` 的 `commandShell()`，查找规则与引擎的 bash 节点相同，认 `ARCHON_BASH_PATH`），超时用 `taskkill /T /F` 杀进程树。**只有单元测试**（`test/lib/devflow.test.ts` 的 `commandShell` 一组，只测查找逻辑），从未在真实 Windows 上执行过。第一次 smoke 和 deliver 时看 `jira fetch` 一行、`checkstyle.log`、`copilot-request.log` 有没有 shell 报错（TROUBLESHOOTING §3.11）。
+- 引擎的 `until_bash`（refine、deliver 的循环结束判断，fix-style 的重跑）在原生 Windows 上走 Git Bash：引擎文档说支持，但没有和 devflow 一起跑过。
+- smoke 的 `maven` 一行在原生 Windows 上可能误报：`tools.ts` 用 `Bun.which('mvn')` + `Bun.spawnSync([mvnPath, '-v'])`，Bun 能否找到并执行 Maven 的 `mvn.cmd` 没有验证过；手工检查是在 Git Bash 里 `./mvnw -v` / `mvn -v`（SETUP §10.3「Windows」）。
+- `doctor.sh`（`perl` 超时、Git Bash 下的 `archon` 启动文件）、`install.sh`、`test/sandbox.sh`（POSIX 路径的 `ARCHON_HOME` 靠 Git Bash 改写）在 Git Bash 里没有跑过。
+- 原生 Windows 上关闭启动 run 的终端窗口后，`--detach` 的后台 run 是否存活；用户名或路径带空格时的行为；长路径（`core.longpaths`）在真实 worktree 深度下是否够用；CRLF checkout 对公司 checkstyle 规则的影响。
+
+**与平台无关：**
 
 - Copilot **有**权限时：`@copilot` 对 draft PR 是否生效；review 作者 login 的实际写法（默认 `copilot_logins` 列了 4 种）；`copilot_confirm_cmd` 能否读到 `review_requested` 事件。对照 `$ARTIFACTS_DIR/copilot-request.log`、`copilot-confirm.log`、`snapshot.json`。
 - 真实的 `pr_caused` CI 失败（编译错误、测试失败）→ 下一轮修复：只在 fixture 和单元测试中覆盖过。
@@ -164,7 +183,8 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
 ### 4.3 已知限制
 
 - `archon workflow abandon` 会删除该 run 的 worktree（分支保留，已 commit 的内容无论是否 push 都还在），worktree 中未提交的内容会丢失。续跑时用同一个 `--branch`。
-- `archon workflow test` 不跟随符号链接：用 `install.sh --link` 安装的 pack 跑不了 fixture。
+- `archon workflow test` 不跟随符号链接：用 `install.sh --link` 安装的 pack 跑不了 fixture。原生 Windows 上 `--link` 通常根本建不出链接（Git Bash 的 `ln -s` 默认复制），install.sh 却仍打印 `linked`；Windows 上一律用复制安装。
+- `archon workflow wake schedule install` 只支持 macOS；Windows 上不用它（TROUBLESHOOTING §3.7.1）。
 - 引擎日志会把 `--input` 的值显示为 `[REDACTED]`；排障时以 run id 和 artifacts 为准，冻结的 settings 值用 `archon workflow get <run-id> --json | jq .metadata.inputs` 看（[TROUBLESHOOTING.md](TROUBLESHOOTING.md) §2.8）。
 - run 启动时就冻结 workflow 源码和 AI 配置；resume 用的是旧源码。改了 YAML 或 alias，必须开一个新 run。
 - loop_group 失败后 resume，会从第 1 轮重新开始（引擎文档 `packages/docs-web/src/content/docs/guides/loop-nodes.md` 的「Failure resume」）。deliver 的 control 在每个第 1 轮从 preflight 的原件重写工单（§8.1 第 2 条已修），但第 1 轮的 `implement` 仍会再跑一次（花钱），轮次编号也从 1 重数。没改 pack 和 settings 时可以 resume，也可以「abandon 后用同一个 `--branch` 开新 run」，但两者不等价：resume 保留本 run 的 `reruns.json`、`copilot-requests.json`、`human-answers.md`、`copilot-skipped`、`thread-notes.json`，新 run 没有这些，会重新请求 Copilot、重新 rerun，之前的 skip-copilot 和回答要重新给；resume 时第 1 轮的 PR 编号是 preflight 当时的值，失败前才建 PR 的话 `pr-text` 会多跑一次。改了 pack 或 settings 就只能开新 run（[OPERATIONS.md](OPERATIONS.md) §3.7 规则 3）。
@@ -177,10 +197,11 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
 ## 5. 在工作电脑上的第一步
 
 0. **移交前（开发电脑上）**：`devflow` 分支必须已提交并 push 到 fork。写本文时 fork 上还没有这个分支，README、HANDOFF、SETUP、OPERATIONS、TROUBLESHOOTING 也都还没提交。检查：`git ls-remote --heads https://github.com/shang-windpine/Archon.git devflow` 期望恰好一行输出。
-1. 按 [../README.md](../README.md) 的"工作电脑快速开始"，以及 [SETUP.md](SETUP.md) 逐步配置：clone fork 的 `devflow` 分支，`bun install`，`bun link`，配置 `~/.archon/config.yaml`（四个 alias，`@devflow-cross` 用 Pi）、`~/.archon/.env`、`gh auth login`、`jira init`、Pi 登录或网关。
-2. `devflow/scripts/install.sh <java-repo>`，然后检查 `<java-repo>/.archon/packs/devflow.yaml`。至少要核对 `checkstyle_cmd`、`jira_view_cmd`、`copilot_mode`、`required_checks`、`ui_hint`/`api_hint`，以及 `.archon/config.yaml` 里的 `worktree.baseBranch`。
-3. `archon workflow run devflow-smoke --input key=<JIRA-KEY>`，要求结尾是 `smoke OK`，`archon workflow get <run-id>` 显示 `Authored outcome: succeeded`。只看 `Status: completed` 不够：探测类检查 FAIL 时 run 仍是 completed（[SETUP.md](SETUP.md) §10.3）。
-4. 先拿一个小需求依次跑 refine → deliver → verify，操作见 [OPERATIONS.md](OPERATIONS.md)。遇到问题先查 [TROUBLESHOOTING.md](TROUBLESHOOTING.md)，再查 [E2E-REPORT.md](E2E-REPORT.md)。
+1. **先按 [SETUP.md](SETUP.md) §W 选定 WSL2（推荐）或原生 Windows**，告诉用户选择和理由；之后所有安装、登录、clone 都在那一侧做。
+2. 按 [../README.md](../README.md) 的"工作电脑快速开始"，以及 [SETUP.md](SETUP.md) 逐步配置：clone fork 的 `devflow` 分支，`bun install`，`bun link`，配置 `~/.archon/config.yaml`（四个 alias，`@devflow-cross` 用 Pi）、`~/.archon/.env`、`gh auth login`、`jira init`、Pi 登录或网关。原生 Windows 上这些命令在 Git Bash 里执行，安装器在 PowerShell 里执行。
+3. `devflow/scripts/install.sh <java-repo>`，然后检查 `<java-repo>/.archon/packs/devflow.yaml`。至少要核对 `checkstyle_cmd`、`jira_view_cmd`、`copilot_mode`、`required_checks`、`ui_hint`/`api_hint`，以及 `.archon/config.yaml` 里的 `worktree.baseBranch`。命令类 setting 在 Windows 上也写 POSIX shell 语法（`./mvnw`，不是 `mvnw.cmd`；正斜杠；单引号），因为执行它们的是 `sh`（WSL2）或 Git Bash（原生），见 SETUP §9 开头。
+4. `archon workflow run devflow-smoke --input key=<JIRA-KEY>`，要求结尾是 `smoke OK`，`archon workflow get <run-id>` 显示 `Authored outcome: succeeded`。只看 `Status: completed` 不够：探测类检查 FAIL 时 run 仍是 completed（[SETUP.md](SETUP.md) §10.3）。
+5. 先拿一个小需求依次跑 refine → deliver → verify，操作见 [OPERATIONS.md](OPERATIONS.md)（Windows 上的命令写法见它的 §0.4）。遇到问题先查 [TROUBLESHOOTING.md](TROUBLESHOOTING.md)（Windows 特有的在 §3.11），再查 [E2E-REPORT.md](E2E-REPORT.md)。
 
 ---
 
@@ -192,7 +213,7 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
 2. [DESIGN.md](DESIGN.md)，尤其是 §2（状态文件）、§3（settings）、§6（deliver 的 done/ask 规则）、§9（不可改的规则）。
 3. [E2E-REPORT.md](E2E-REPORT.md)：真实运行中发生过什么。
 4. 与任务相关的 workflow YAML，以及它的 `commands/`、`scripts/`；共享逻辑看 [`.shared/lib/README.md`](../pack/devflow/.shared/lib/README.md)。
-5. 需要引擎事实时，先查 [research/](research/)，再到 Archon 源码和 `packages/docs-web/src/content/docs/reference/` 中核对。**笔记是 commit `2aabbd0ca` 时的快照，和源码或 `archon <cmd> --help` 冲突时，以源码和 help 为准。** 不要编造 CLI flag，用 `archon <cmd> --help` 确认。
+5. 需要引擎事实时，先查 [research/](research/)，再到 Archon 源码和 `packages/docs-web/src/content/docs/reference/` 中核对。**笔记是 commit `2aabbd0ca` 时的快照，和源码或 `archon <cmd> --help` 冲突时，以源码和 help 为准。** 笔记是在 macOS 上调研的，涉及进程、路径、shell 的结论在 Windows 上要另外核对（Archon 文档 `deployment/windows.md`、`reference/workflow-language.md` 的超时一节、`packages/git/src/exec.ts`）。不要编造 CLI flag，用 `archon <cmd> --help` 确认。
 6. Archon 仓库根目录的 `AGENTS.md`：整个仓库的工程规则。
 
 ### 6.2 绝对不要做
@@ -265,12 +286,16 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
 10. **已修**：`test/lib/refine.test.ts` 检查 `GATE_DECISIONS` 与 YAML 里 `gate` 的选项一致。
 11. **设计缺口的处理**：(a) `local_verify_cmd` 失败不再让 publish refuse：照常 push，act 把失败交给下一轮 implement 并问人（DESIGN §6，fixture `local-verify-failed`）。(b) verify 的 `context` 不再移动未消费的 `followup-work.md`：警告写进 `context.md`，也通过 `followup_notice` 出现在 `run-tests` 给人的提示里（DESIGN §7，`test/verify/context.test.ts`）。(c) judge 的 decline/not_this_change 在同一轮回复并 resolve：保持不变，DESIGN §6 记录了原因。
 
+12. **已改（只有单元测试）**：命令类 setting 原来固定用 `sh -c` 执行、超时用 `process.kill(-pid)` 杀进程组，这两样在原生 Windows 上都不成立。现在由 `.shared/lib/devflow.ts` 的 `commandShell()` 选 shell：macOS/Linux 是 `sh`，原生 Windows 是 Git Bash（`ARCHON_BASH_PATH` → Git for Windows 的常见安装位置，和引擎 `packages/git/src/exec.ts` 的 `resolveBashPath` 同一顺序；pack 不能 import 引擎代码，所以是复制的一份）；超时时 POSIX 杀进程组、Windows 用 `taskkill /T /F` 杀进程树。结论：命令模板在所有平台上都是 POSIX shell 语法。只测了查找逻辑（`test/lib/devflow.test.ts`），没有在真实 Windows 上执行过（§4.2）。
+
 ### 8.2 引擎行为（不是 pack 问题，只需知道）
 
 - `~/.archon/config.yaml` 的**顶层** key 写错不报错，静默忽略（`archon doctor` 仍显示 valid）；只有 `assistants.*` 下是严格校验。所以改完要用 `archon ai alias list` 确认 4 个 alias 都在。
 - `archon ai alias set` 会重写整个 `~/.archon/config.yaml`，删掉所有注释。
 - `archon validate workflows` 不检查 command `.md` 里 `$node.output.x`、`$INPUTS.x` 的拼写；`archon validate commands` 不检查 pack 的 command。只有 fixture 跑到的节点会被 `archon workflow test` 检查。
 - `archon workflow test` 不跟随符号链接。
+- 原生 Windows 上引擎用 Git Bash 执行 `bash:` 节点和 `until_bash`，找不到时报 `bash executable not found ... Set ARCHON_BASH_PATH ...`；`until_bash` 超时只结束它自己的进程（Archon 文档 `reference/workflow-language.md`「Bash and script node timeouts」），所以 fix-style 重跑 checkstyle 超时时，Maven 派生的 `java.exe` 在 Windows 上可能残留并占用 worktree 文件（TROUBLESHOOTING §3.11.6）。
+- 原生 Windows 上有 run 执行时，引擎会阻止系统睡眠（`deployment/windows.md`）；WSL2 里没有这个机制。
 
 ### 8.3 其他改进方向
 
@@ -280,3 +305,13 @@ devflow 是一个 Archon workflow pack，放在 Archon fork（`github.com/shang-
 4. **更多 fixture 和真实覆盖**：`pr_caused` → 修复、checkstyle 失败 → fix-style、merge 冲突、6 轮用完、`refine_human: always/never`、verify 的 UI 路径、`followup-work.md` 回流。
 5. **Jira 回写**：确认 jira-cli 的评论命令（模板示例是 `jira issue comment add {key} --template {file} --no-input`，未实测）以后，再决定是否打开 `jira_comment_cmd`。
 6. **语言统一**：如果需要所有产物用同一种语言，在 `~/.claude/CLAUDE.md` 或 policy 中写明，不要在脚本里做后处理。
+
+### 8.4 Windows 上已知的代码级风险（发现问题时先看这里）
+
+这些问题是读代码发现的，都没有在原生 Windows 真机上复现。第 1–4 条已在开发电脑上修复并补了单元测试；第 5 条仍是风险。工作电脑上如果遇到新问题，按 §6.3 在 pack 里修：先改 DESIGN，再改代码和测试。
+
+1. **已修**：smoke 的 `tools.ts` 里，`Bun.spawnSync` 抛异常时（例如 `mvn.cmd` 不能直接执行）只记该行失败，不再让整个 `tools` 节点失败。maven 行仍可能误报，手动用 Git Bash 跑 `mvn -v` 确认即可；真正执行 `checkstyle_cmd` 时走的是 Git Bash，不受这个问题影响。
+2. **已修**：`install.sh --link` 在 Git Bash（MINGW/MSYS/CYGWIN）里会直接拒绝并提示改用复制安装，不再打印一个并不存在的 `linked`。
+3. **已修**：`runCommand()` 找不到 shell 时不再抛异常，包括 `ARCHON_BASH_PATH` 写错、没装 Git for Windows 两种情况。现在返回退出码 127，并在 log 里写明「安装 Git for Windows 或设置 `ARCHON_BASH_PATH`」。调用方按「命令失败」处理，所以 intake 读 Jira、request-review 的 confirm 仍然只记警告，不会让节点失败。
+4. **已修**：`.shared/lib/README.md` 和 `templates/packs-devflow.yaml` 的注释已改成「POSIX shell（`sh`，Windows 上是 Git Bash）」和「进程组 / Windows 进程树」。
+5. `doctor.sh` 依赖 Git for Windows 自带的 `perl` 实现超时（`alarm` + `exec`），MSYS 版 perl 对 Windows 原生程序的 `alarm` 行为未验证；`test/sandbox.sh` 的 `env.sh` 用 POSIX 路径导出 `ARCHON_HOME`，依赖 Git Bash 在启动 `bun.exe` 时改写环境变量里的路径。

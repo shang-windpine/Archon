@@ -7,7 +7,15 @@
  */
 
 import { spawn } from 'node:child_process';
-import { closeSync, fstatSync, mkdirSync, openSync, readSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  writeSync,
+} from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 
 /** DESIGN §2: a Jira key or an operator slug; also a safe single path segment. */
@@ -161,10 +169,63 @@ function readTail(path: string, chars: number): string {
   }
 }
 
+export interface ShellHost {
+  readonly platform: NodeJS.Platform;
+  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly exists: (path: string) => boolean;
+}
+
 /**
- * Run an operator-configured command with `sh -c`, its combined output written to
- * `logPath` (stdout to `stdoutPath` instead, when given). The command runs in its own process group so a timeout kills everything
- * it started (a build tool's forked JVMs included), not only the shell. Never throws
+ * The shell that runs operator-configured commands. Command templates are POSIX shell
+ * (single-quoted tokens, `{print $1}`), so Windows needs Git Bash, never cmd.exe or
+ * PowerShell. The lookup mirrors the engine's bash resolution for bash nodes
+ * (`ARCHON_BASH_PATH`, then the usual Git for Windows locations) so a pack command and
+ * a bash node run under the same shell; the pack cannot import engine code, so it is
+ * repeated here. A missing Git Bash returns the default path, and the spawn error then
+ * names it.
+ */
+export function commandShell(host: ShellHost): string {
+  const override = host.env.ARCHON_BASH_PATH;
+  if (override) {
+    if (!host.exists(override))
+      throw new Error(`ARCHON_BASH_PATH points to a path that does not exist: '${override}'`);
+    return override;
+  }
+  if (host.platform !== 'win32') return 'sh';
+  const programFiles = host.env.ProgramFiles ?? 'C:\\Program Files';
+  const candidates = [
+    `${programFiles}\\Git\\bin\\bash.exe`,
+    `${programFiles}\\Git\\usr\\bin\\bash.exe`,
+    `${host.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)'}\\Git\\bin\\bash.exe`,
+    ...(host.env.LOCALAPPDATA ? [`${host.env.LOCALAPPDATA}\\Programs\\Git\\bin\\bash.exe`] : []),
+    ...(host.env.USERPROFILE
+      ? [`${host.env.USERPROFILE}\\scoop\\apps\\git\\current\\bin\\bash.exe`]
+      : []),
+  ];
+  return candidates.find(candidate => host.exists(candidate)) ?? (candidates[0] as string);
+}
+
+/** Kills a command and everything it started: its process group on POSIX, its process tree on Windows. */
+function killTree(pid: number): void {
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/T', '/F', '/PID', String(pid)], { stdio: 'ignore' }).on('error', () => {
+      // taskkill missing or the tree already gone: the timeout is still reported.
+    });
+    return;
+  }
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch {
+    // The group already exited between the timer firing and the kill.
+  }
+}
+
+/**
+ * Run an operator-configured command with the POSIX shell from `commandShell` (`sh`,
+ * or Git Bash on Windows) and `-c`, its combined output written to
+ * `logPath` (stdout to `stdoutPath` instead, when given). A timeout kills everything the command started (a build tool's forked
+ * JVMs included), not only the shell: the process group on POSIX, the process tree
+ * (`taskkill /T /F`) on Windows, where process groups do not exist. Never throws
  * for a failing command: the caller decides what a nonzero exit means. The command
  * text is not logged: an operator's command can carry a credential.
  */
@@ -182,25 +243,42 @@ export async function runCommand(
       mkdirSync(dirname(options.stdoutPath), { recursive: true });
       outFd = openSync(options.stdoutPath, 'w');
     }
-    const child = spawn('sh', ['-c', command], {
+    let shell: string;
+    try {
+      shell = commandShell({ platform: process.platform, env: process.env, exists: existsSync });
+    } catch (error) {
+      // A wrong ARCHON_BASH_PATH is a failed command, not a thrown error: callers that only
+      // warn on a failing command (a Jira fetch, a review confirmation) must keep running.
+      writeSync(fd, `devflow: ${error instanceof Error ? error.message : String(error)}\n`);
+      return {
+        code: 127,
+        timedOut: false,
+        outputTail: readTail(options.logPath, options.tailChars ?? 4000),
+      };
+    }
+    const child = spawn(shell, ['-c', command], {
       cwd: options.cwd,
       env: process.env,
       stdio: ['ignore', outFd, fd],
-      detached: true,
+      // A new process group on POSIX; on Windows `detached` would open a console window.
+      detached: process.platform !== 'win32',
+      windowsHide: true,
     });
     const timer = setTimeout(() => {
       timedOut = true;
-      const pid = child.pid;
-      if (pid === undefined) return;
-      try {
-        process.kill(-pid, 'SIGKILL');
-      } catch {
-        // The group already exited between the timer firing and the kill.
-      }
+      if (child.pid !== undefined) killTree(child.pid);
     }, options.timeoutMs);
     try {
-      code = await new Promise<number | null>((resolve, reject) => {
-        child.once('error', reject);
+      code = await new Promise<number | null>(resolve => {
+        // The shell itself could not start (no Git Bash on Windows): report it as exit 127,
+        // the shell's own "command not found" code, with the remedy in the log.
+        child.once('error', error => {
+          writeSync(
+            fd,
+            `devflow: could not start '${shell}': ${error.message}. On Windows install Git for Windows or set ARCHON_BASH_PATH to its bash.exe.\n`
+          );
+          resolve(127);
+        });
         child.once('close', exitCode => resolve(exitCode));
       });
     } finally {

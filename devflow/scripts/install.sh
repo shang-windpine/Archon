@@ -60,6 +60,13 @@ if [ -e "$DEST" ] || [ -L "$DEST" ]; then
 fi
 mkdir -p "$TARGET/.archon/workflows"
 if [ "$LINK" -eq 1 ]; then
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      # Git Bash's `ln -s` silently copies unless native symlinks are enabled, which would
+      # report a link that is not one. Copy is the supported install on native Windows.
+      echo "refusing: --link is not supported in Git Bash on Windows; run without --link (copy)" >&2
+      exit 1 ;;
+  esac
   ln -s "$PACK_SRC" "$DEST"
   say linked "$DEST -> $PACK_SRC"
 else

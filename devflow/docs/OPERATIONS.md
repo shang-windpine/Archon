@@ -18,7 +18,7 @@
 
 | 占位符 | 含义 | 例子 |
 |---|---|---|
-| `<java-repo>` | Java 仓库**主 checkout** 的绝对路径（就是 `install.sh` 装 pack 的那个目录） | `/Users/me/work/order-service` |
+| `<java-repo>` | Java 仓库**主 checkout** 的绝对路径（就是 `install.sh` 装 pack 的那个目录） | `/Users/me/work/order-service`（WSL2：`/home/me/work/order-service`；原生 Windows 的 Git Bash：`/c/Users/me/work/order-service`） |
 | `<KEY>` | 需求的 key：Jira key，或自己起的 slug。必须匹配 `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` | `ABC-123`、`fix-login-timeout` |
 | `<branch>` | deliver 用的功能分支名。建议固定为 `feature/<KEY>` | `feature/ABC-123` |
 | `<run-id>` | 一次 run 的完整 id（UUID）。命令里尽量用完整 id，8 位前缀只在本项目目录下能解析 | `6c057182-2205-463a-ac9a-77aa4c6c414f` |
@@ -56,6 +56,30 @@
 
 pack 永远不会合并 PR，也不会把 PR 标成 ready（全程 draft）。合并由人在 GitHub 上做。
 
+### 0.4 在 Windows 工作电脑上执行本文命令
+
+本文的命令最初在 macOS 上写成。工作电脑是 Windows，先确认 [SETUP.md](SETUP.md) §W 选的是哪条路径：
+
+- **Path A（WSL2）**：所有命令在 Ubuntu 终端里执行，基本原样可用。差别只有：shell profile 是 `~/.bashrc`（不是 `~/.zshrc`）；没有 `pbpaste`（见 §2.1 的替代写法）；`jq` 用 `sudo apt install jq` 安装。
+- **Path B（原生 Windows）**：所有 `bash` 代码块在 **Git Bash** 里执行，不要贴进 PowerShell 或 cmd。和 macOS 的差别：
+
+| 本文里的写法 | Path B（Git Bash）的处理 | 为什么 |
+|---|---|---|
+| `~/.zshrc` | `~/.bashrc` | Git Bash 是 bash |
+| `pbpaste > <文件>` | `cat /dev/clipboard > <文件>`，或用记事本打开文件粘贴保存（§2.1） | Windows 没有 `pbpaste` |
+| `jq -r ...` 的结果放进变量（`D=$(... \| jq -r .artifactsDir)`） | 加 `-b`：`jq -r -b ...` | Windows 的 `jq.exe` 默认输出 CRLF，变量末尾多一个看不见的 `\r`，拿它当路径会报 "No such file or directory"。旧版 jq 没有 `-b` 时改成 `\| tr -d '\r'`。只是打印到屏幕看时不用加 |
+| Archon 打印的路径（`Draft:`、`Discussion log:`、`logPath` 等） | 是 `C:\Users\<你>\.archon\...` 形式。在 Git Bash 里用它时加**单引号**：`cat 'C:\Users\me\.archon\...\escalation.md'`；或者用 `archon workflow artifacts <run-id> <file>` 读，不碰路径 | 不加引号时反斜杠被 bash 当成转义符 |
+| `--input brief_file=/绝对路径/xxx.md` | `--input brief_file=C:/Users/<你>/notes/xxx.md`（盘符加正斜杠） | Git Bash 对 `key=/c/...` 形式的参数是否改写不好预测；没改写时 Windows 程序找不到文件（SETUP W.4「路径的三条规则」） |
+| `~/.archon/...` | 照写（Git Bash 的 `~` 就是 `%USERPROFILE%`） | |
+| `/tmp/...` | 照写（Git Bash 把它映射到 `%LOCALAPPDATA%\Temp`） | |
+| Ctrl-C、关闭终端窗口 | 规则和 macOS 一样：前台运行时 Ctrl-C 会把 run 记成 `failed`，关窗口会让 run 停在 `running`、没有 owner。所以启动和回答**一律加 `--detach`** | 见 §2.3、§5.3。原生 Windows 上关掉启动它的窗口后 `--detach` 的后台 run 是否存活没有在真机上验证过；关窗口后用 `archon workflow status` 确认 |
+
+其他 Windows 注意事项：
+
+- **电脑睡眠**：原生 Windows 上有 run 正在执行时 Archon 会阻止系统睡眠，但挡不住合盖和手动睡眠；WSL2 里没有这个机制（SETUP W.5 第 4 条）。deliver 跑 `await` 时（可能几十分钟）别让电脑睡着；paused 等回答的 run 不受睡眠影响。
+- **文件占用（Path B）**：在 deliver 的 worktree 里打开 IDE、启动服务做人工测试之后，abandon、`archon complete`、`archon isolation cleanup` 会因为文件被占用而删不掉 worktree。清理前先关掉它们（[TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.11.6）。
+- **结束卡住的进程**：用 PowerShell 的 `taskkill /PID <pid> /T /F`，只按确切的 PID，不按进程名批量杀（SETUP W.6）。
+
 ---
 
 ## 1. 找到 `$STATE_DIR`（交接目录）
@@ -68,17 +92,19 @@ pack 永远不会合并 PR，也不会把 PR 标成 ready（全程 draft）。�
 
 每个需求的文件在 `$STATE_DIR/devflow/<KEY>/` 下。`<owner>/<repo>` 是 Archon 注册这个仓库时用的项目 key，通常就是 GitHub 上的 `owner/repo`。
 
-把下面的函数粘进 `~/.zshrc`（或者每次直接粘进终端）。它先查 Archon 的项目登记（最准），查不到时（仓库还没跑过任何 workflow）退回到从 `origin` 的 URL 推算：
+把下面的函数粘进 `~/.zshrc`（WSL2 和 Git Bash 是 `~/.bashrc`；或者每次直接粘进终端）。它先查 Archon 的项目登记（最准），查不到时（仓库还没跑过任何 workflow）退回到从 `origin` 的 URL 推算：
 
 ```bash
 devflow_state() {
   local top key
   top=$(git rev-parse --show-toplevel) || return 1
-  key=$(archon project list --json 2>/dev/null | jq -r --arg p "$top" '.projects[]? | select(.default_cwd == $p) | .key' | head -n 1)
+  key=$(archon project list --json 2>/dev/null | jq -r --arg p "$top" '.projects[]? | select(.default_cwd == $p) | .key' | tr -d '\r' | head -n 1)
   [ -n "$key" ] || key=$(git -C "$top" remote get-url origin | sed -E 's#\.git$##; s#^.*[:/]([^/]+)/([^/]+)$#\1/\2#')
   echo "${ARCHON_HOME:-$HOME/.archon}/workspaces/$key/state"
 }
 ```
+
+（`tr -d '\r'` 是给 Windows 的 `jq.exe` 准备的，它默认输出 CRLF；在 macOS/Linux 上不起作用，无害。）
 
 用法和预期输出：
 
@@ -86,9 +112,13 @@ devflow_state() {
 cd <java-repo>
 devflow_state
 # 预期：/Users/me/.archon/workspaces/acme/order-service/state
+#   WSL2：/home/me/.archon/workspaces/acme/order-service/state
+#   原生 Windows（Git Bash）：/c/Users/me/.archon/workspaces/acme/order-service/state
 export STATE_DIR=$(devflow_state)
 ls "$STATE_DIR/devflow/"        # 每个 KEY 一个目录；第一次用时可能不存在，正常
 ```
+
+原生 Windows 上，Archon 登记的 `default_cwd` 很可能是 `C:\Users\...` 形式，而 Git Bash 里 `git rev-parse --show-toplevel` 打印 `C:/Users/...`，两者对不上时函数会走第二条路（从 `origin` URL 推算）。项目 key 就是 GitHub 的 `owner/repo` 时结果一样；用下面的交叉核对确认一次。
 
 交叉核对（任选其一，结果应当一致）：
 
@@ -96,7 +126,7 @@ ls "$STATE_DIR/devflow/"        # 每个 KEY 一个目录；第一次用时可�
 - refine 暂停时打印的 `Discussion log: .../state/devflow/<KEY>/refine-log.md`，去掉 `/devflow/...` 就是 `$STATE_DIR`。
 - refine 因为没有材料被拒绝时，错误信息里会打印 inbox 的完整路径。
 
-`macOS` 自带 `jq`（`/usr/bin/jq`）。如果 `which jq` 没有输出，`brew install jq`，或只用 `archon project list` 人工读 KEY 列。
+`macOS` 自带 `jq`（`/usr/bin/jq`）。如果 `which jq` 没有输出，`brew install jq`，或只用 `archon project list` 人工读 KEY 列。Windows：WSL2 里 `sudo apt install jq`；原生 Windows 在 PowerShell 里 `winget install --id jqlang.jq -e`，然后新开 Git Bash，`command -v jq` 应打印路径（Git for Windows 不带 jq）。
 
 ---
 
@@ -123,6 +153,19 @@ pbpaste > "$STATE_DIR/devflow/ABC-123/inbox/01-slack-2026-11-14.md"   # 先在 S
 cat "$STATE_DIR/devflow/ABC-123/inbox/01-slack-2026-11-14.md" | head   # 确认内容对
 ```
 
+**Windows：** 没有 `pbpaste`，第 4 行换成下面任一种（其余几行照抄）：
+
+```bash
+# 原生 Windows（Git Bash）：读剪贴板
+cat /dev/clipboard > "$STATE_DIR/devflow/ABC-123/inbox/01-slack-2026-11-14.md"
+# 原生 Windows（Git Bash）：用记事本打开（文件不存在时记事本会问是否新建，选"是"），粘贴后保存
+notepad "$(cygpath -w "$STATE_DIR/devflow/ABC-123/inbox/01-slack-2026-11-14.md")"
+# WSL2：通过 Windows 的 PowerShell 读剪贴板（先切到 UTF-8 输出，否则中文会乱码），去掉 CRLF 里的 \r
+powershell.exe -NoProfile -Command '[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Clipboard' | tr -d '\r' > "$STATE_DIR/devflow/ABC-123/inbox/01-slack-2026-11-14.md"
+```
+
+用最后的 `cat ... | head` 确认内容对、中文没有乱码。有乱码就改用记事本粘贴（保存为 UTF-8）。
+
 粘贴内容的建议格式（任意格式都能读，但下面这样 agent 理解得最好）：
 
 ```markdown
@@ -146,7 +189,7 @@ archon workflow run devflow-refine --input key=ABC-123 "补充：只改后台，
 
 可选参数：
 
-- `--input brief_file=/Users/me/notes/abc-123.md`：额外材料文件。
+- `--input brief_file=/Users/me/notes/abc-123.md`：额外材料文件。原生 Windows 写成 `--input brief_file=C:/Users/me/notes/abc-123.md`（§0.4）。
 - `--input refine_human=always`：每一轮都问人（默认 `auto`：reviewer 要求人工、或 reviewer 判定 approve 时才问）。
 - `--input jira_view_cmd=`：本次不取 Jira（值为空字符串）。
 - `--detach --json`：后台运行，见 [§5](#5-后台模式与-attention-队列)。
@@ -215,7 +258,7 @@ Workflow paused — waiting for approval.
 | 再改一轮 | `archon workflow respond <run-id> revise "<你的意见>" --detach` | 意见原文追加到 `refine-log.md`；下一轮 draft 必须逐条落实，review 再评一次 |
 | 就用这一版 | `archon workflow respond <run-id> finalize "<可选补充>" --detach` | 下一轮 control 看到 finalize，跳过 draft/review/gate，结束循环；文本原样写进需求文档最后的 decision log |
 
-关于 `--detach`：不加时，`respond` 会在**当前终端里**继续跑下一轮。这时按 Ctrl-C，run 会被记为 `failed`（refine 可以 resume；deliver 按 §3.7 处理）；但**直接关掉终端窗口**时进程来不及收尾，run 会一直停在 `running`、没有 owner，`resume` 会拒绝它，要按 [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.7.2 处理。所以回答时一律加 `--detach`：由后台子进程继续，命令很快返回。之后用 `archon workflow wait <run-id> --json` 或 `archon workflow attention` 等下一次提问。
+关于 `--detach`：不加时，`respond` 会在**当前终端里**继续跑下一轮。这时按 Ctrl-C，run 会被记为 `failed`（refine 可以 resume；deliver 按 §3.7 处理）；但**直接关掉终端窗口**时进程来不及收尾，run 会一直停在 `running`、没有 owner，`resume` 会拒绝它，要按 [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.7.2 处理。所以回答时一律加 `--detach`：由后台子进程继续，命令很快返回。之后用 `archon workflow wait <run-id> --json` 或 `archon workflow attention` 等下一次提问。（Windows 上同样适用：关闭 Git Bash、PowerShell 或 Windows Terminal 的窗口/标签页，等于 macOS 上关终端，见 §0.4。）
 
 **好的 revise 意见长这样**（E2E 实际使用的回答）：
 
@@ -273,7 +316,7 @@ ls "$STATE_DIR/devflow/ABC-123/"
 直接用同一个 key 再跑：
 
 ```bash
-pbpaste > "$STATE_DIR/devflow/ABC-123/inbox/02-slack-change-2026-11-20.md"
+pbpaste > "$STATE_DIR/devflow/ABC-123/inbox/02-slack-change-2026-11-20.md"   # Windows：换成 §2.1 的替代写法
 archon workflow run devflow-refine --input key=ABC-123 "需求有变更，见 inbox/02"
 ```
 
@@ -367,7 +410,7 @@ archon workflow wait <run-id> --json       # 阻塞到 run 结束或需要你回
 | 某个 run 的详情和结论 | `archon workflow get <run-id>`（看 `Status`、`Authored outcome`、`Reason`）；`--verbose` 加节点表 |
 | 实时跟进 | `archon workflow logs <run-id> --follow --format text` |
 | 列出 / 打开 artifacts | `archon workflow artifacts <run-id>`；`archon workflow artifacts <run-id> escalation.md` |
-| 直接看文件 | `ls ~/.archon/workspaces/<owner>/<repo>/artifacts/runs/<run-id>/` |
+| 直接看文件 | `ls ~/.archon/workspaces/<owner>/<repo>/artifacts/runs/<run-id>/`（原生 Windows 也可以在资源管理器打开 `%USERPROFILE%\.archon\workspaces\<owner>\<repo>\artifacts\runs\<run-id>`） |
 | PR 本身 | `gh pr view <N> --web`，或 escalation 消息里的 PR URL |
 
 注意：
@@ -487,6 +530,7 @@ cat "$STATE_DIR/devflow/ABC-123/delivery.json"
 
 ```bash
 archon workflow get <run-id> --json --verbose | jq -r '.nodes[] | select(.state=="failed") | .nodeId'
+# 原生 Windows 想把结果放进变量时加 -b（§0.4）；只看屏幕输出不用加
 ```
 
 loop 里面的节点 id 一般带 `rounds.` 前缀，例如 `rounds.publish`、`rounds.await`；loop 外面的是 `preflight`、`summarize`、`finish`。看到不带前缀的 `publish`、`await`、`act`、`implement` 等，也是 loop 里的节点（每轮节点顺序见 §3.3）。
@@ -540,7 +584,7 @@ E2E 实测过这个路径：abandon 后用同一个 `--branch` 重跑，Archon �
 - 不要 `archon workflow run devflow-deliver --resume --branch ...`：`--resume` 和 `--branch` 互斥。
 - 不要用 `cancel`/`abandon` 来「解除等待」：paused 的 run 只需要回答。
 - 不要在 run 进行中从别的地方往 `<branch>` push。publish 只做非 force 的 push，远端被别人推进过会直接失败。要手工改代码，就在 worktree 里 commit，让下一次 publish 推上去。
-- 不要手工 `rm -rf` worktree 目录，用 `archon workflow abandon` 或 `archon complete`（§7）。
+- 不要手工 `rm -rf` worktree 目录，用 `archon workflow abandon` 或 `archon complete`（§7）。原生 Windows 上 abandon 删 worktree 失败（文件被占用）时也不要手工删，按 [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.11.6 处理。
 
 ---
 
@@ -585,6 +629,7 @@ Abandon: `archon workflow abandon <run-id>`
 
 1. 读 `verify-plan.md`。每个用例有 ID（`UI-1`、`API-1`……）、对应的验收标准、前置测试数据、步骤、期望结果。
 2. **在 deliver 的 worktree 里启动服务**：路径是 `delivery.json` 的 `worktree_path`（`jq -r .worktree_path "$STATE_DIR/devflow/ABC-123/delivery.json"`），它就停在功能分支上。不要在主 checkout 里 `git switch <branch>`：worktree 占着这个分支，git 会拒绝；硬切换还会让下一次 deliver 报 `branch_checked_out`。worktree 已经被清理时，用 `git worktree add /tmp/abc-123-test <branch>` 临时建一个，测完 `git worktree remove /tmp/abc-123-test`。
+   **Windows：** 原生 Windows 上 `worktree_path` 是 `C:\Users\<你>\.archon\workspaces\...\worktrees\feature\ABC-123` 形式，用 IDE 直接打开这个目录即可；在 Git Bash 里 `cd` 时加单引号，或用 `cd "$(jq -r -b .worktree_path "$STATE_DIR/devflow/ABC-123/delivery.json")"`。WSL2 上它是 Linux 路径，IDE 要用 WSL 方式打开（SETUP W.2）。**测完要停掉服务、关掉 IDE 里的这个项目**：原生 Windows 上它们占着 worktree 里的文件，之后 deliver 写文件、abandon 或 `archon complete` 删除 worktree 都可能失败（[TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.11.6）。
 3. 按计划准备测试数据、执行用例。
 4. 编辑 `verify-results.md`，**每个用例一行**：
 
@@ -692,11 +737,11 @@ archon workflow attention --watch         # 持续监听：有新问题时打印
 
 1. **`--json` 只记录答案，不会让 run 继续。** `approve`/`reject`/`respond`/`answer` 加 `--json` 后 run 停在「已回答、待继续」，需要再执行 `archon workflow resume <run-id> --detach`。日常回答**不要加 `--json`**。
 2. **`answer` 不支持 `--detach`。** message 表单想后台继续，就用 `archon workflow approve <run-id> "<text>" --detach`（对 message 表单，approve 的 text 就是答案）。
-3. **不加 `--detach` 时，run 在当前终端里继续执行。** Ctrl-C 会把 run 记为 `failed`（可以 resume，但 deliver 见 §3.7 规则 3）；直接关掉终端窗口时 run 会停在 `running`、没有 owner，`resume` 会拒绝，要按 [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.7.2 处理。
+3. **不加 `--detach` 时，run 在当前终端里继续执行。** Ctrl-C 会把 run 记为 `failed`（可以 resume，但 deliver 见 §3.7 规则 3）；直接关掉终端窗口时 run 会停在 `running`、没有 owner，`resume` 会拒绝，要按 [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.7.2 处理。Windows 上一样（§0.4）。
 
 ### 5.4 在 Claude Code 里用 archon-cli skill 回答
 
-前提：已经按 [SETUP.md](SETUP.md) §10.4（可选步骤）执行过 `archon skill add <java-repo>`，仓库里有 `.claude/skills/archon-cli/`，并且已把它加进 `.git/info/exclude`。
+前提：已经按 [SETUP.md](SETUP.md) §10.4（可选步骤）执行过 `archon skill add <java-repo>`，仓库里有 `.claude/skills/archon-cli/`，并且已把它加进 `.git/info/exclude`。Windows：Claude Code 必须和 Archon 在同一侧（WSL2 就在 Ubuntu 里开 `claude`，原生就在 Windows 里开）；原生 Windows 上 Claude Code 的 Bash 工具执行的是 Git Bash，本文的 bash 命令对它同样适用（§0.4）。
 
 在 `<java-repo>` 里打开 Claude Code，可以这样说：
 
@@ -750,6 +795,8 @@ archon complete feature/ABC-123
 ```
 
 `archon complete <branch>` 删除这个分支的 worktree 和**本地**分支，**保留远端分支**（打印一条警告）。远端分支用 GitHub 的「Automatically delete head branches」，或手工 `git push origin --delete feature/ABC-123`。
+
+原生 Windows：执行前先关掉在这个 worktree 里打开的 IDE、终端和服务，否则删除可能因文件被占用而失败（[TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.11.6）。
 
 `complete` 会拒绝的情况：worktree 有未提交改动、还有 running/paused/可 resume 的 failed run 占用它、有 open 的 PR、有未推送或未合并的 commit。按提示处理，不要随手加 `--force`（`--force` 跳过这些检查，可能丢掉唯一一份 commit）。还有 paused 的 deliver 占着它时，先确认不再需要，再 `archon workflow abandon <run-id>`。
 

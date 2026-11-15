@@ -87,7 +87,7 @@ pack 布局硬规则：每个 workflow 文件夹恰好一个 YAML；pack 根目�
 | `api_hint` | string | `""` | 告诉 agent 哪些路径/模块属于 External API 侧（自由文本） |
 | `project_notes` | string | `""` | 仓库内给 agent 看的项目说明文件路径（如 `AGENTS.md`），为空则 agent 自行发现 |
 
-命令模板替换是**我们自己的配置**做的确定性 token 替换，不是解析自然语言。替换值做 shell 安全处理：脚本用 `sh -c` 执行命令，替换进去的值一律经过单引号转义。
+命令模板替换是**我们自己的配置**做的确定性 token 替换，不是解析自然语言。替换值做 shell 安全处理：脚本用 POSIX shell 的 `-c` 执行命令（macOS/Linux 是 `sh`；原生 Windows 是 Git Bash，按 `ARCHON_BASH_PATH` → Git for Windows 常见安装位置查找，与引擎执行 `bash:` 节点的规则相同，见 `.shared/lib/devflow.ts` 的 `commandShell`），替换进去的值一律经过单引号转义。所以命令模板在所有平台上都是 POSIX shell 语法，Windows 上也不写 cmd 或 PowerShell 语法。超时时结束命令启动的全部进程：POSIX 上是进程组，Windows 上用 `taskkill /T /F` 结束进程树。
 
 ## 4. 模型与角色（model alias）
 
